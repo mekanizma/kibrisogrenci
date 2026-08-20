@@ -10,7 +10,9 @@ import {
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { messages, tFor } from '@/lib/i18n';
+import { messages, tFor, LOCALES, LOCALE_LABEL, isRTL, listingLang, isMachineTranslated } from '@/lib/i18n';
+import { DashboardView, AdminView, WhatsAppView } from '@/components/panels';
+import { createClient } from '@/lib/supabase/client';
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -234,6 +236,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.lang = locale;
+    document.documentElement.dir = isRTL(locale) ? 'rtl' : 'ltr';
     window.scrollTo(0, 0);
   }, [view, locale]);
 
@@ -261,6 +264,9 @@ export default function App() {
         {view.name === 'university' && <UniversityView {...shared} slug={view.slug} />}
         {view.name === 'scam' && <StaticView {...shared} kind="scam" />}
         {view.name === 'how' && <StaticView {...shared} kind="how" />}
+        {view.name === 'dashboard' && <DashboardView t={t} locale={locale} config={config} />}
+        {view.name === 'admin' && <AdminView t={t} locale={locale} />}
+        {view.name === 'whatsapp' && <WhatsAppView t={t} locale={locale} />}
       </main>
 
       <Footer t={t} config={config} setView={setView} goUniversity={goUniversity} />
@@ -286,10 +292,13 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
           </div>
         </button>
 
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
+        <nav className="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
           <button onClick={() => setView({ name: 'search', filters: {} })} className="hover:text-[#0a4d68]">{t('nav.search')}</button>
           <button onClick={() => setView({ name: 'how' })} className="hover:text-[#0a4d68]">{t('nav.how')}</button>
           <button onClick={() => setView({ name: 'scam' })} className="hover:text-[#0a4d68]">{t('nav.scam')}</button>
+          <button onClick={() => setView({ name: 'dashboard' })} className="hover:text-[#0a4d68]">{t('nav.dashboard')}</button>
+          <button onClick={() => setView({ name: 'admin' })} className="hover:text-[#0a4d68]">{t('nav.admin')}</button>
+          <button onClick={() => setView({ name: 'whatsapp' })} className="hover:text-[#0a4d68]">{t('nav.whatsapp')}</button>
         </nav>
 
         <div className="flex items-center gap-2">
@@ -298,10 +307,10 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
             {(config?.currencies || ['TRY', 'GBP', 'USD', 'EUR']).map(c => <option key={c} value={c}>{SYMBOL[c]} {c}</option>)}
           </select>
           <div className="flex rounded-lg border border-slate-200 overflow-hidden">
-            {['tr', 'en'].map(l => (
+            {LOCALES.map(l => (
               <button key={l} onClick={() => setLocale(l)}
-                className={`px-2.5 h-9 text-sm font-semibold ${locale === l ? 'bg-[#0a4d68] text-white' : 'bg-white text-slate-500'}`}>
-                {l.toUpperCase()}
+                className={`px-2 h-9 text-xs font-semibold ${locale === l ? 'bg-[#0a4d68] text-white' : 'bg-white text-slate-500'}`}>
+                {LOCALE_LABEL[l]}
               </button>
             ))}
           </div>
@@ -337,6 +346,8 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
 
   const stats = config?.stats;
   const unis = config?.universities || [];
+  const FEATURED = { tr: 'Öne çıkan ilanlar', en: 'Featured listings', ru: 'Рекомендуемые объявления', fr: 'Annonces en vedette', ar: 'إعلانات مميزة' };
+  const STAT = { listings: t('universities.listings_count'), universities: t('universities.title'), verified_landlords: t('trust.verified_badge'), cities: t('search.city') };
 
   return (
     <div>
@@ -381,7 +392,7 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
             {[['listings', stats.listings], ['universities', stats.universities], ['verified_landlords', stats.verified_landlords], ['cities', stats.cities]].map(([k, v]) => (
               <div key={k} className="bg-white rounded-xl border border-slate-200 p-4 text-center shadow-sm">
                 <div className="text-2xl font-bold text-[#0a4d68]">{v}</div>
-                <div className="text-xs text-slate-500 mt-0.5 capitalize">{k.replace('_', ' ')}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{STAT[k]}</div>
               </div>
             ))}
           </div>
@@ -391,7 +402,7 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
       {/* Featured */}
       <section className="container py-12">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-xl md:text-2xl font-bold text-[#0a3d54]">{locale === 'tr' ? 'Öne çıkan ilanlar' : 'Featured listings'}</h2>
+          <h2 className="text-xl md:text-2xl font-bold text-[#0a3d54]">{FEATURED[locale] || FEATURED.en}</h2>
           <button onClick={() => goSearch({})} className="text-sm font-semibold text-[#0a4d68] hover:underline">
             {t('nav.search')} →
           </button>
@@ -628,8 +639,10 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
 
   if (!l || l.error) return <div className="container py-20 text-center text-slate-400">{t('common.loading')}</div>;
 
-  const title = locale === 'tr' ? l.title_tr : l.title_en;
-  const desc = locale === 'tr' ? l.description_tr : l.description_en;
+  const baseLang = listingLang(locale);
+  const mt = isMachineTranslated(locale);
+  const title = (mt && showOriginal) ? l.title_tr : (baseLang === 'tr' ? l.title_tr : l.title_en);
+  const desc = (mt && showOriginal) ? l.description_tr : (baseLang === 'tr' ? l.description_tr : l.description_en);
   const pi = l.price_index;
   const totalFirstMonth = l.price.currency === l.deposit.currency
     ? { amount: l.price.amount + l.deposit.amount, currency: l.price.currency } : null;
@@ -709,7 +722,15 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
           {/* Description with machine-translation note (RU/FR/AR handled later; TR/EN native) */}
           <div className="mt-6">
             <h2 className="font-bold text-[#0a3d54] mb-2">{t('listing.description')}</h2>
-            <p className="text-slate-600 leading-relaxed whitespace-pre-line">{desc}</p>
+            {mt && (
+              <div className="mb-2 flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-1.5 text-xs text-slate-500">
+                <Info className="h-3.5 w-3.5" /> {t('listing.machine_translated')}
+                <button onClick={() => setShowOriginal(o => !o)} className="font-semibold text-[#0a4d68] underline">
+                  {showOriginal ? '↩' : t('listing.view_original')}
+                </button>
+              </div>
+            )}
+            <p lang={(mt && !showOriginal) ? 'en' : 'tr'} className="text-slate-600 leading-relaxed whitespace-pre-line">{desc}</p>
           </div>
 
           {/* Amenities */}
@@ -993,10 +1014,35 @@ function Footer({ t, config, setView, goUniversity }) {
 function AuthModal({ t, onClose, setAuth }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const signIn = () => {
-    setAuth({ signedIn: true, studentId: `demo-${Math.random().toString(36).slice(2, 8)}`, email: email || 'student@demo' });
-    onClose();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const realAuth = async (mode) => {
+    const supabase = createClient();
+    if (!supabase) { setMsg('Supabase yapılandırılmadı.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      if (mode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) { setMsg(error.message); setBusy(false); return; }
+        if (data.session) {
+          setAuth({ signedIn: true, studentId: data.user.id, email: data.user.email });
+          onClose();
+        } else {
+          setMsg('Kayıt alındı. E-posta onayı gerekiyorsa gelen kutunuzu kontrol edin.');
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) { setMsg(t('auth.err')); setBusy(false); return; }
+        setAuth({ signedIn: true, studentId: data.user.id, email: data.user.email });
+        onClose();
+      }
+    } catch (e) { setMsg(t('auth.err')); }
+    setBusy(false);
   };
+
+  const demo = () => { setAuth({ signedIn: true, studentId: `demo-${Math.random().toString(36).slice(2, 8)}`, email: email || 'student@demo' }); onClose(); };
+
   return (
     <Overlay onClose={onClose}>
       <h2 className="text-lg font-bold text-[#0a3d54]">{t('auth.title')}</h2>
@@ -1012,8 +1058,12 @@ function AuthModal({ t, onClose, setAuth }) {
           <input type="password" value={password} onChange={e => setPassword(e.target.value)}
             className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm mt-1 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
         </div>
-        <button onClick={signIn} className="w-full h-11 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('auth.signin')}</button>
-        <button onClick={signIn} className="w-full h-11 rounded-xl border border-slate-200 text-slate-700 font-semibold">{t('auth.as_student')}</button>
+        {msg && <p className="text-xs text-slate-600 bg-slate-100 rounded-lg px-3 py-2">{msg}</p>}
+        <div className="grid grid-cols-2 gap-2">
+          <button disabled={busy} onClick={() => realAuth('signin')} className="h-11 rounded-xl bg-[#0a4d68] text-white font-semibold disabled:opacity-60">{t('auth.signin')}</button>
+          <button disabled={busy} onClick={() => realAuth('signup')} className="h-11 rounded-xl border border-[#0a4d68] text-[#0a4d68] font-semibold disabled:opacity-60">{t('auth.signup')}</button>
+        </div>
+        <button onClick={demo} className="w-full h-11 rounded-xl border border-slate-200 text-slate-600 font-semibold">{t('auth.as_student')}</button>
       </div>
     </Overlay>
   );

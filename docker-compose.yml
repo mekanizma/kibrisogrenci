@@ -1,0 +1,40 @@
+# Coolify deployment. Supabase runs as a SEPARATE existing Coolify service —
+# connect by env var, do not bundle it here. No host port bindings except via
+# Coolify's proxy. Per-service resource limits; restart unless-stopped; JSON logs.
+services:
+  web:
+    build: { context: ., dockerfile: Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+    expose: ["3000"]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 768M }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/config"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build: { context: ., dockerfile: Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    command: ["node", "scripts/worker.js"]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384M }
+
+  whatsapp:
+    build: { context: ., dockerfile: Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    command: ["node", "scripts/whatsapp.js"]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384M }

@@ -195,6 +195,186 @@ backend:
         -agent: "testing"
         -comment: "✅ PASS: Reports endpoint working correctly. Valid report (ref + reason) returns 200 with {ok:true}. Missing fields returns 400."
 
+  - task: "WhatsApp webhook security (GET/POST /api/whatsapp/webhook)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: WhatsApp webhook security working correctly. POST with invalid signature (sha256=deadbeef) returns 403. GET with wrong verify token returns 403. HMAC verification properly rejects invalid signatures before parsing body."
+
+  - task: "POST /api/whatsapp/sim (demo student/landlord flows)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: WhatsApp sim working correctly. Student flow (message: 'Girne ucuz doğrulanmış') returns reply_type 'cards' with 5 cards, each with ref/title/price/walking_minutes/city. Landlord flow (message: 'Girne 2+1 620 GBP eşyalı') returns reply_type 'summary' with extracted fields (property_type, bedrooms, price_amount, price_currency, neighbourhood, furnished)."
+
+  - task: "GET /api/my/listings (landlord dashboard)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/my/listings working correctly. Returns items array (4 listings for Ayşe Yılmaz) and quota object with used/total/package (4/15/Pro)."
+
+  - task: "POST /api/my/listings (create listing)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: POST /api/my/listings working correctly. Creates new listing with status 'pending_review' (NOT published). Returns ok:true and item object with generated reference_code."
+
+  - task: "GET /api/my/analytics"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/my/analytics working correctly. Returns trend array with 6 weekly entries containing views/reveals/saves/inquiries metrics."
+
+  - task: "GET /api/my/inquiries"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/my/inquiries working correctly. Returns items array with 2 inquiries from web and WhatsApp sources."
+
+  - task: "GET /api/my/billing"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/my/billing working correctly. Returns subscription (Pro package, active status), invoices array (1 invoice for Ayşe Yılmaz), and bank_instructions object."
+
+  - task: "GET /api/admin/queue"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/admin/queue working correctly. Returns items array (2 items) including at least one with priority:true and risk_flags array length > 0."
+
+  - task: "GET /api/admin/health"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/admin/health working correctly. Returns 4 health checks: smtp_canary, fx_rates, storage, whatsapp_spend. All checks have status and detail fields."
+
+  - task: "POST /api/admin/invoices/pay"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: POST /api/admin/invoices/pay working correctly. Marking invoice inv-2 as paid returns ok:true and subscription_activated:true."
+
+  - task: "GET /api/admin/audit"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/admin/audit working correctly. Returns items array (2 entries). After marking invoice as paid, the newest entry has action 'invoice.mark_paid' as expected."
+
+  - task: "POST /api/admin/coords/verify"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: POST /api/admin/coords/verify working correctly. Verifying university u-metu returns ok:true."
+
+  - task: "GET /api/admin/users"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/admin/users working correctly. Returns items array with 5 users."
+
+  - task: "GET /api/admin/reports"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/admin/reports working correctly. Returns items array with 1 report."
+
+  - task: "GET /api/admin/invoices"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASS: GET /api/admin/invoices working correctly. Returns items array with 2 invoices."
+
 frontend:
   - task: "Public marketplace UI (home/search/listing/university), TR/EN, currency toggle, gated reveal"
     implemented: true
@@ -223,5 +403,18 @@ test_plan:
 agent_communication:
     -agent: "main"
     -message: "Slice 1 marketplace built with a MOCKED in-memory API (no MongoDB, no external calls). Please test all /api endpoints. MOST CRITICAL: contact gating — assert that NO listing list/detail response ever contains a phone number or exact latitude/longitude; phones must only come from POST /api/reveal when signedIn+studentId provided, and the 16th reveal for the same studentId in a day must return 429. Also verify METU (odtu-kuzey-kibris) is excluded from /api/config universities (unverified coordinates) but present in all_universities. Base URL: use the app's /api prefix."
+    -agent: "main"
+    -message: "ROUND 2 — added Slice 2/4 endpoints + real WhatsApp webhook. Please test (all under /api, use NEXT_PUBLIC_BASE_URL + /api): 
+    (A) WHATSAPP WEBHOOK SECURITY (highest priority): 
+      - POST /api/whatsapp/webhook with header 'x-hub-signature-256: sha256=deadbeef' and any JSON body -> MUST be 403 (rejected before parsing). 
+      - Compute a VALID signature: hmac_sha256(raw_body, secret) where secret = env WHATSAPP_APP_SECRET. NOTE: in this sandbox WHATSAPP_APP_SECRET is likely EMPTY string; when secret is empty the verify function returns false so ALL posts are 403 — that is expected/secure. Just confirm the invalid-signature case returns 403. 
+      - GET /api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=WRONG&hub.challenge=123 -> 403.
+    (B) WHATSAPP SIM (demo): POST /api/whatsapp/sim {flow:'student', message:'Girne ucuz doğrulanmış'} -> reply_type 'cards' with up to 5 cards. {flow:'landlord', message:'Girne 2+1 620 GBP eşyalı'} -> reply_type 'summary' with extracted fields.
+    (C) DASHBOARD: GET /api/my/listings?owner=Ayşe%20Yılmaz -> items + quota{used,total,package}. POST /api/my/listings {owner:'Ayşe Yılmaz', title:'Test', price_amount:500, price_currency:'GBP'} -> ok:true, item.status='pending_review'. GET /api/my/analytics, /api/my/inquiries, /api/my/billing?owner=Ayşe%20Yılmaz -> 200 with data.
+    (D) ADMIN: GET /api/admin/queue -> includes the risk-flagged listing (priority:true, risk_flags length>0). GET /api/admin/health -> 4 checks. POST /api/admin/invoices/pay {id:'inv-2'} -> ok:true, subscription_activated:true. Then GET /api/admin/audit -> the top entry action should be 'invoice.mark_paid'. POST /api/admin/coords/verify {id:'u-metu'} -> ok:true. GET /api/admin/users, /api/admin/reports, /api/admin/invoices -> 200.
+    (E) REGRESSION: re-confirm no phone/exact-coords in /api/listings and /api/listings/A3F9K2, and /api/reveal 16th call for a fresh studentId returns 429.
+    Report pass/fail per case."
     -agent: "testing"
     -message: "✅ ALL BACKEND TESTS PASSED (7/7 test groups). Comprehensive testing completed for all API endpoints. CRITICAL CONTACT GATING verified: NO phone numbers or exact coordinates in listings/detail responses. Phone numbers only revealed via POST /api/reveal with proper auth. Rate limiting working (15 requests OK, 16th returns 429). METU exclusion verified in /api/config. All filters, sorting, and error handling working correctly. Backend is production-ready."
+    -agent: "testing"
+    -message: "✅ ROUND 2 COMPLETE - ALL TESTS PASSED (5/5 test groups). Tested all Slice 2/4 endpoints + WhatsApp webhook. (A) WhatsApp webhook security: ✅ POST with invalid signature returns 403, GET with wrong token returns 403. (B) WhatsApp sim: ✅ Student flow returns cards (5 items), landlord flow returns summary with extracted fields. (C) Landlord dashboard: ✅ All 5 endpoints working (my/listings GET/POST, my/analytics, my/inquiries, my/billing). POST creates listing with status 'pending_review'. (D) Admin: ✅ All 8 endpoints working (queue with priority+risk_flags, health with 4 checks, invoices/pay, audit with invoice.mark_paid entry, coords/verify, users, reports, invoices). (E) Regression: ✅ Contact gating verified (no phone/coords in listings/detail), rate limiting verified (16th request returns 429). Backend fully functional."
