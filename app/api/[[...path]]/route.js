@@ -390,6 +390,12 @@ async function handleLive(request, route, path, method, sp, user) {
     const body = await request.json().catch(() => ({}));
     return json(await db.dbBecomeLandlord(user, body));
   }
+  if (route === 'my/profile' && method === 'POST') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const body = await request.json().catch(() => ({}));
+    return json(await db.dbUpdateProfile(user, body));
+  }
   if (route === 'my/saved' && method === 'GET') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);

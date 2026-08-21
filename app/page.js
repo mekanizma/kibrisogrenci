@@ -106,28 +106,29 @@ function PriceDisplay({ price, currency, fx, locale, t, size = 'lg' }) {
 }
 
 function ListingCard({ l, t, locale, currency, fx, onOpen }) {
-  const risky = (l.risk_flags || []).length > 0;
+  const photo = (l.photos && l.photos[0]) || '/logo.svg';
   return (
     <button
       onClick={() => onOpen(l.reference_code)}
-      className="group text-start bg-white rounded-2xl overflow-hidden border border-slate-200 hover:shadow-lg hover:border-[#0a4d68]/30 transition-all flex flex-col"
+      className="ko-card group text-start flex flex-col"
     >
-      <div className="relative aspect-[4/3] overflow-hidden bg-slate-100">
-        <img src={l.photos[0]} alt={locale === 'tr' ? l.title_tr : l.title_en}
+      <div className="relative aspect-[4/3] overflow-hidden bg-[var(--ko-mist)]">
+        <img src={photo} alt={locale === 'tr' ? l.title_tr : l.title_en}
           loading="lazy"
-          className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500" />
-        <div className="absolute top-2 start-2 flex gap-1.5">
+          className="h-full w-full object-cover group-hover:scale-[1.04] transition-transform duration-700 ease-out" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#08304a]/45 via-transparent to-transparent opacity-80" />
+        <div className="absolute top-2.5 start-2.5 flex gap-1.5">
           {l.landlord_verified && <VerifiedPill t={t} small />}
           {l.landlord_is_agency && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-white/90 text-slate-700 px-2 py-0.5 text-[11px] font-semibold">
+            <span className="ko-chip bg-white/95 text-slate-700 shadow-sm">
               <Building2 className="h-3 w-3" /> {t('listing.agency')}
             </span>
           )}
         </div>
         {(l.walking_minutes != null || l.distance_m != null) && (
-          <div className="absolute bottom-2 start-2">
-            <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68] text-white px-2 py-1 text-[11px] font-semibold shadow">
-              <Waypoints className="h-3 w-3" />
+          <div className="absolute bottom-2.5 start-2.5">
+            <span className="ko-chip bg-white/95 text-[#0a3d54] shadow-sm">
+              <Waypoints className="h-3 w-3 text-[#0a4d68]" />
               {l.walking_minutes != null ? `${l.walking_minutes} dk` : ''}
               {l.walking_minutes != null && l.distance_m != null ? ' · ' : ''}
               {l.distance_m != null ? `${(Number(l.distance_m) / 1000).toFixed(1)}km` : ''}
@@ -135,31 +136,28 @@ function ListingCard({ l, t, locale, currency, fx, onOpen }) {
           </div>
         )}
       </div>
-      <div className="p-4 flex flex-col gap-2 flex-1">
+      <div className="p-4 sm:p-5 flex flex-col gap-2 flex-1">
         <div className="flex items-center gap-1.5 text-xs text-slate-500">
-          <MapPin className="h-3.5 w-3.5" /> {l.neighbourhood}, {l.city}
+          <MapPin className="h-3.5 w-3.5 text-[#0a4d68]" /> {l.neighbourhood}, {l.city}
         </div>
-        <h3 className="font-semibold text-slate-800 leading-snug line-clamp-2 min-h-[2.6rem]">
+        <h3 className="font-semibold text-[#0a3d54] leading-snug line-clamp-2 min-h-[2.6rem]">
           {locale === 'tr' ? l.title_tr : l.title_en}
         </h3>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
           <span>{t(`ptype.${l.property_type}`)}</span>
-          <span>·</span>
+          <span className="text-slate-300">·</span>
           {l.property_type === 'room'
             ? <span>{t('listing.private_room')}</span>
             : (l.bedrooms > 0 ? <span>{l.bedrooms} {t('listing.bedrooms_n')}</span> : <span>{t('ptype.studio')}</span>)}
-          <span>·</span>
-          {l.size_sqm ? <span>{l.size_sqm} m²</span> : null}
+          {l.size_sqm ? (<><span className="text-slate-300">·</span><span>{l.size_sqm} m²</span></>) : null}
         </div>
         {l.room_share && (
-          <span className="inline-flex w-fit items-center gap-1 rounded-full bg-[#0a4d68]/10 text-[#0a4d68] px-2 py-0.5 text-[11px] font-semibold">
+          <span className="ko-chip w-fit bg-[#0a4d68]/10 text-[#0a4d68]">
             <Users className="h-3 w-3" /> {t('listing.shared')} · +{l.flatmates} {t('listing.flatmates')}
           </span>
         )}
-        <div className="mt-auto pt-2 flex items-end justify-between gap-2">
+        <div className="mt-auto pt-3 flex items-end justify-between gap-2 border-t border-slate-100">
           <PriceDisplay price={l.price} currency={currency} fx={fx} locale={locale} t={t} size="md" />
-        </div>
-        <div className="flex flex-wrap gap-1.5">
           <PriceIndexPill pi={l.price_index} t={t} listing={l} />
         </div>
       </div>
@@ -169,11 +167,13 @@ function ListingCard({ l, t, locale, currency, fx, onOpen }) {
 
 function ScamBanner({ t, compact }) {
   return (
-    <div className={`rounded-xl border border-amber-200 bg-amber-50 ${compact ? 'p-3' : 'p-4'} flex gap-3`}>
-      <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+    <div className={`rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 to-orange-50/40 ${compact ? 'p-3' : 'p-4 sm:p-5'} flex gap-3`}>
+      <div className="h-10 w-10 shrink-0 rounded-xl bg-amber-100/80 flex items-center justify-center">
+        <ShieldAlert className="h-5 w-5 text-amber-700" />
+      </div>
       <div>
-        <div className="font-semibold text-amber-900 text-sm">{t('scam.banner_title')}</div>
-        <p className="text-sm text-amber-800 mt-0.5 leading-relaxed">{t('scam.banner')}</p>
+        <div className="font-semibold text-amber-950 text-sm">{t('scam.banner_title')}</div>
+        <p className="text-sm text-amber-900/80 mt-0.5 leading-relaxed">{t('scam.banner')}</p>
       </div>
     </div>
   );
@@ -272,17 +272,17 @@ export default function App() {
     auth, setAuth, setAuthModal, setReportModal };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-800 overflow-x-hidden">
+    <div className="min-h-screen text-slate-800 overflow-x-hidden">
       <Header {...shared} locale={locale} setLocale={setLocale} currency={currency} setCurrency={setCurrency}
         setView={setView} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
 
       {config?.mock && (
-        <div className="bg-[#0a3d54] text-white/90 text-center text-xs py-1.5 px-4">
+        <div className="bg-[#08304a] text-white/90 text-center text-xs py-1.5 px-4 tracking-wide">
           {t('demo_banner')}
         </div>
       )}
 
-      <main>
+      <main className="pb-2">
         {view.name === 'home' && <HomeView {...shared} setView={setView} />}
         {view.name === 'search' && <SearchView {...shared} initialFilters={view.filters} />}
         {view.name === 'listing' && <ListingView {...shared} refCode={view.ref} setView={setView} />}
@@ -318,66 +318,66 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
     ['whatsapp', () => go({ name: 'whatsapp' })],
   ];
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
-      <div className="container flex items-center justify-between h-16 gap-2">
-        <button onClick={() => go({ name: 'home' })} className="flex items-center gap-2 shrink-0 min-w-0">
-          <img src="/logo.png" alt={t('brand')} className="h-10 w-10 object-contain shrink-0" />
+    <header className="sticky top-0 z-40 border-b border-[#0a3d54]/10 bg-white/80 backdrop-blur-xl">
+      <div className="container flex items-center justify-between h-[4.25rem] gap-2">
+        <button onClick={() => go({ name: 'home' })} className="flex items-center gap-2.5 shrink-0 min-w-0 group">
+          <span className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--ko-mist)] ring-1 ring-[#0a4d68]/10 overflow-hidden">
+            <img src="/logo.png" alt={t('brand')} className="h-9 w-9 object-contain" />
+          </span>
           <div className="text-start leading-none min-w-0">
-            <div className="font-bold text-[#0a3d54] text-base sm:text-lg truncate">{t('brand')}</div>
-            <div className="text-[10px] text-slate-500 hidden md:block truncate">{t('tagline')}</div>
+            <div className="ko-display font-semibold text-[#0a3d54] text-lg sm:text-xl truncate group-hover:text-[#0a4d68] transition-colors">{t('brand')}</div>
+            <div className="text-[10px] text-slate-500 hidden md:block truncate mt-0.5 tracking-wide">{t('tagline')}</div>
           </div>
         </button>
 
-        <nav className="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
+        <nav className="hidden lg:flex items-center gap-1 text-sm font-medium text-slate-600">
           {navItems.map(([k, fn]) => (
-            <button key={k} onClick={fn} className="hover:text-[#0a4d68] whitespace-nowrap">{t(`nav.${k}`)}</button>
+            <button key={k} onClick={fn} className="px-3 py-2 rounded-lg hover:bg-[var(--ko-mist)] hover:text-[#0a4d68] whitespace-nowrap transition-colors">{t(`nav.${k}`)}</button>
           ))}
         </nav>
 
         <div className="flex items-center gap-1.5 shrink-0">
           <select value={currency} onChange={e => setCurrency(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-1.5 text-xs font-medium text-slate-600 focus:ring-2 focus:ring-[#0a4d68]/30 outline-none">
+            className="h-9 rounded-xl border border-slate-200/80 bg-white/90 px-2 text-xs font-medium text-slate-600 focus:ring-2 focus:ring-[#0a4d68]/25 outline-none">
             {(config?.currencies || ['TRY', 'GBP', 'USD', 'EUR']).map(c => <option key={c} value={c}>{SYMBOL[c]} {c}</option>)}
           </select>
-          {/* language: buttons on desktop, dropdown on mobile */}
-          <div className="hidden md:flex rounded-lg border border-slate-200 overflow-hidden">
+          <div className="hidden md:flex rounded-xl border border-slate-200/80 overflow-hidden bg-white/90">
             {LOCALES.map(l => (
               <button key={l} onClick={() => setLocale(l)}
-                className={`px-2 h-9 text-xs font-semibold ${locale === l ? 'bg-[#0a4d68] text-white' : 'bg-white text-slate-500'}`}>
+                className={`px-2.5 h-9 text-xs font-semibold transition-colors ${locale === l ? 'bg-[#0a4d68] text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
                 {LOCALE_LABEL[l]}
               </button>
             ))}
           </div>
           <select value={locale} onChange={e => setLocale(e.target.value)}
-            className="md:hidden h-9 rounded-lg border border-slate-200 bg-white px-1.5 text-xs font-semibold text-slate-600 outline-none">
+            className="md:hidden h-9 rounded-xl border border-slate-200/80 bg-white/90 px-1.5 text-xs font-semibold text-slate-600 outline-none">
             {LOCALES.map(l => <option key={l} value={l}>{LOCALE_LABEL[l]}</option>)}
           </select>
           {auth.signedIn ? (
             <button onClick={() => signOutEverywhere(setAuth)}
-              className="hidden md:inline-flex h-9 items-center rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100">
+              className="hidden md:inline-flex h-9 items-center rounded-xl px-3 text-sm font-medium text-slate-600 hover:bg-[var(--ko-mist)]">
               {t('nav.signout')}
             </button>
           ) : (
             <button onClick={() => setAuthModal(true)}
-              className="hidden md:inline-flex h-9 items-center rounded-lg bg-[#0a4d68] px-3.5 text-sm font-semibold text-white hover:bg-[#08415c]">
+              className="hidden md:inline-flex h-9 items-center rounded-xl bg-[#0a4d68] px-3.5 text-sm font-semibold text-white hover:bg-[#08415c] shadow-sm shadow-[#0a4d68]/20">
               {t('nav.signin')}
             </button>
           )}
-          <button onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden h-9 w-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-600">
+          <button onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden h-9 w-9 flex items-center justify-center rounded-xl border border-slate-200/80 text-slate-600 bg-white/90">
             {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
       </div>
 
-      {/* mobile menu */}
       {menuOpen && (
-        <div className="lg:hidden border-t border-slate-200 bg-white">
+        <div className="lg:hidden border-t border-slate-200/80 bg-white/95 backdrop-blur-xl">
           <nav className="container py-3 flex flex-col gap-1">
             {navItems.map(([k, fn]) => (
-              <button key={k} onClick={fn} className="text-start py-2.5 px-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50">{t(`nav.${k}`)}</button>
+              <button key={k} onClick={fn} className="text-start py-3 px-3 rounded-xl text-sm font-medium text-slate-700 hover:bg-[var(--ko-mist)]">{t(`nav.${k}`)}</button>
             ))}
             {auth.signedIn ? (
-              <button onClick={() => { signOutEverywhere(setAuth); setMenuOpen(false); }} className="text-start py-2.5 px-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">{t('nav.signout')}</button>
+              <button onClick={() => { signOutEverywhere(setAuth); setMenuOpen(false); }} className="text-start py-3 px-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">{t('nav.signout')}</button>
             ) : (
               <button onClick={() => { setAuthModal(true); setMenuOpen(false); }} className="mt-1 h-11 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('nav.signin')}</button>
             )}
@@ -408,33 +408,36 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
 
   return (
     <div>
-      {/* Hero */}
-      <section className="relative">
+      <section className="relative min-h-[78vh] sm:min-h-[70vh] flex items-end sm:items-center overflow-hidden">
         <div className="absolute inset-0">
-          <img src={config?.hero_image} alt="" className="h-full w-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#08304a]/90 via-[#0a4d68]/80 to-[#0a4d68]/50" />
+          <img src={config?.hero_image || '/logo.png'} alt="" className="h-full w-full object-cover scale-105" />
+          <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-r from-[#062636]/95 via-[#0a4d68]/78 to-[#0a4d68]/35" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_20%,rgba(224,162,86,0.18),transparent_55%)]" />
         </div>
-        <div className="relative container py-16 md:py-24">
+        <div className="relative container py-14 md:py-20 w-full">
           <div className="max-w-2xl text-white">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-medium mb-4">
-              <ShieldCheck className="h-4 w-4 text-[#7ee2a8]" /> KKTC · North Cyprus
-            </span>
-            <h1 className="text-3xl md:text-5xl font-bold leading-tight">{t('hero.title')}</h1>
-            <p className="mt-4 text-white/85 text-base md:text-lg leading-relaxed">{t('hero.subtitle')}</p>
+            <p className="ko-display ko-fade-up text-2xl sm:text-3xl md:text-4xl font-semibold text-white/95 tracking-tight">
+              {t('brand')}
+            </p>
+            <h1 className="ko-fade-up-delay mt-3 text-3xl md:text-5xl font-bold leading-[1.12] text-white">
+              {t('hero.title')}
+            </h1>
+            <p className="ko-fade-up-delay-2 mt-4 text-white/85 text-base md:text-lg leading-relaxed max-w-xl">
+              {t('hero.subtitle')}
+            </p>
 
-            {/* Search box */}
-            <div className="mt-8 bg-white rounded-2xl p-3 shadow-xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_auto] gap-2">
+            <div className="ko-fade-up-delay-2 mt-8 rounded-2xl bg-white/95 backdrop-blur p-3 sm:p-3.5 shadow-[0_24px_60px_-28px_rgba(6,38,54,0.65)] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_auto] gap-2">
               <select value={uni} onChange={e => setUni(e.target.value)}
-                className="h-12 w-full min-w-0 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30">
+                className="h-12 w-full min-w-0 rounded-xl border border-slate-200/90 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30">
                 <option value="">{t('search.any_university')}</option>
                 {unis.map(u => <option key={u.id} value={u.id}>{u.short} — {locale === 'tr' ? u.name_tr : u.name_en}</option>)}
               </select>
               <input type="number" value={budget} onChange={e => setBudget(e.target.value)} placeholder={`${t('search.budget')} (${SYMBOL[currency]})`}
-                className="h-12 w-full min-w-0 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
+                className="h-12 w-full min-w-0 rounded-xl border border-slate-200/90 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
               <input type="date" value={movein} onChange={e => setMovein(e.target.value)}
-                className="h-12 w-full min-w-0 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
+                className="h-12 w-full min-w-0 rounded-xl border border-slate-200/90 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
               <button onClick={() => goSearch({ university: uni, price_max_display: budget ? convertMoney(Number(budget), currency, 'GBP', fx) : '', movein })}
-                className="h-12 w-full min-w-0 rounded-xl bg-[#e0a256] hover:bg-[#d4923f] px-6 font-semibold text-[#3a2606] inline-flex items-center justify-center gap-2 sm:col-span-2 lg:col-span-1">
+                className="ko-btn-accent h-12 w-full min-w-0 px-6 sm:col-span-2 lg:col-span-1">
                 <Search className="h-5 w-5" /> {t('search.button')}
               </button>
             </div>
@@ -442,25 +445,13 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
         </div>
       </section>
 
-      {/* Stats */}
-      {stats && (
-        <section className="container -mt-8 relative z-10">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[['listings', stats.listings], ['universities', stats.universities], ['verified_landlords', stats.verified_landlords], ['cities', stats.cities]].map(([k, v]) => (
-              <div key={k} className="bg-white rounded-xl border border-slate-200 p-4 text-center shadow-sm">
-                <div className="text-2xl font-bold text-[#0a4d68]">{v}</div>
-                <div className="text-xs text-slate-500 mt-0.5">{STAT[k]}</div>
-              </div>
-            ))}
+      <section className="container py-12 md:py-14">
+        <div className="flex items-end justify-between gap-3 mb-6">
+          <div>
+            <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54]">{FEATURED[locale] || FEATURED.en}</h2>
+            <p className="text-sm text-slate-500 mt-1">{t('tagline')}</p>
           </div>
-        </section>
-      )}
-
-      {/* Featured */}
-      <section className="container py-12">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-xl md:text-2xl font-bold text-[#0a3d54]">{FEATURED[locale] || FEATURED.en}</h2>
-          <button onClick={() => goSearch({})} className="text-sm font-semibold text-[#0a4d68] hover:underline">
+          <button onClick={() => goSearch({})} className="text-sm font-semibold text-[#0a4d68] hover:underline shrink-0">
             {t('nav.search')} →
           </button>
         </div>
@@ -469,20 +460,32 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
         </div>
       </section>
 
-      {/* How we build trust */}
-      <section className="bg-white border-y border-slate-200 py-14">
+      {stats && (
+        <section className="container pb-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[['listings', stats.listings], ['universities', stats.universities], ['verified_landlords', stats.verified_landlords], ['cities', stats.cities]].map(([k, v]) => (
+              <div key={k} className="ko-surface p-4 text-center">
+                <div className="ko-display text-2xl font-semibold text-[#0a4d68]">{v}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{STAT[k]}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="py-14 mt-6 bg-gradient-to-b from-white to-[var(--ko-mist)]/40 border-y border-[#0a3d54]/8">
         <div className="container">
-          <h2 className="text-xl md:text-2xl font-bold text-[#0a3d54] text-center">{t('trust.how_title')}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mt-8">
+          <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54] text-center">{t('trust.how_title')}</h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-10">
             {t('trust.how_items').map((it, i) => {
               const Icon = [BadgeCheck, TrendingDown, ShieldAlert, Clock][i];
               return (
-                <div key={i} className="rounded-2xl border border-slate-200 p-5">
-                  <div className="h-11 w-11 rounded-xl bg-[#e8f2f6] flex items-center justify-center mb-3">
+                <div key={i} className="text-center md:text-start">
+                  <div className="mx-auto md:mx-0 h-12 w-12 rounded-2xl bg-[var(--ko-mist)] flex items-center justify-center mb-3 ring-1 ring-[#0a4d68]/10">
                     <Icon className="h-5 w-5 text-[#0a4d68]" />
                   </div>
-                  <div className="font-semibold text-slate-800">{it.t}</div>
-                  <p className="text-sm text-slate-500 mt-1 leading-relaxed">{it.d}</p>
+                  <div className="font-semibold text-[#0a3d54]">{it.t}</div>
+                  <p className="text-sm text-slate-500 mt-1.5 leading-relaxed">{it.d}</p>
                 </div>
               );
             })}
@@ -490,25 +493,23 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
         </div>
       </section>
 
-      {/* Universities */}
       <section className="container py-14">
-        <h2 className="text-xl md:text-2xl font-bold text-[#0a3d54] mb-5">{t('universities.title')}</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54] mb-6">{t('universities.title')}</h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
           {unis.map(u => (
             <button key={u.id} onClick={() => goUniversity(u.slug)}
-              className="text-start rounded-2xl border border-slate-200 bg-white p-5 hover:border-[#0a4d68]/40 hover:shadow-md transition-all">
+              className="ko-card text-start p-4 sm:p-5">
               <div className="flex items-center gap-2 mb-2">
                 <GraduationCap className="h-5 w-5 text-[#0a4d68]" />
-                <span className="text-xs font-semibold text-[#0a4d68] bg-[#e8f2f6] rounded px-1.5 py-0.5">{u.short}</span>
+                <span className="text-xs font-semibold text-[#0a4d68] bg-[var(--ko-mist)] rounded-md px-1.5 py-0.5">{u.short}</span>
               </div>
-              <div className="font-semibold text-slate-800 leading-snug">{locale === 'tr' ? u.name_tr : u.name_en}</div>
+              <div className="font-semibold text-[#0a3d54] leading-snug">{locale === 'tr' ? u.name_tr : u.name_en}</div>
               <div className="text-xs text-slate-500 mt-1">{u.city} · {u.listings_count} {t('universities.listings_count')}</div>
             </button>
           ))}
         </div>
       </section>
 
-      {/* Scam guide teaser */}
       <section className="container pb-16">
         <ScamBanner t={t} />
       </section>
@@ -1134,33 +1135,34 @@ function StaticView({ t, locale, kind }) {
 // ---------------------------------------------------------------------------
 function Footer({ t, config, setView, goUniversity }) {
   return (
-    <footer className="bg-[#0a3d54] text-white/80 mt-8">
-      <div className="container py-12 grid grid-cols-1 md:grid-cols-4 gap-8">
+    <footer className="relative mt-10 overflow-hidden bg-[#062636] text-white/80">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(10,77,104,0.55),transparent_50%)]" />
+      <div className="relative container py-12 grid grid-cols-1 md:grid-cols-4 gap-8">
         <div className="md:col-span-2">
           <div className="flex items-center gap-2.5 mb-3">
-            <img src="/logo.png" alt={t('brand')} className="h-11 w-11 object-contain bg-white rounded-lg p-1" />
-            <span className="font-bold text-white text-lg">{t('brand')}</span>
+            <img src="/logo.png" alt={t('brand')} className="h-11 w-11 object-contain bg-white rounded-xl p-1" />
+            <span className="ko-display font-semibold text-white text-xl">{t('brand')}</span>
           </div>
-          <p className="text-sm leading-relaxed max-w-md">{t('footer.about')}</p>
+          <p className="text-sm leading-relaxed max-w-md text-white/70">{t('footer.about')}</p>
         </div>
         <div>
           <div className="font-semibold text-white mb-3">{t('nav.search')}</div>
           <ul className="space-y-2 text-sm">
-            <li><button onClick={() => setView({ name: 'search', filters: {} })} className="hover:text-white">{t('nav.search')}</button></li>
-            <li><button onClick={() => setView({ name: 'how' })} className="hover:text-white">{t('nav.how')}</button></li>
-            <li><button onClick={() => setView({ name: 'scam' })} className="hover:text-white">{t('nav.scam')}</button></li>
+            <li><button onClick={() => setView({ name: 'search', filters: {} })} className="hover:text-white transition-colors">{t('nav.search')}</button></li>
+            <li><button onClick={() => setView({ name: 'how' })} className="hover:text-white transition-colors">{t('nav.how')}</button></li>
+            <li><button onClick={() => setView({ name: 'scam' })} className="hover:text-white transition-colors">{t('nav.scam')}</button></li>
           </ul>
         </div>
         <div>
           <div className="font-semibold text-white mb-3">{t('universities.title')}</div>
           <ul className="space-y-2 text-sm">
             {(config?.universities || []).slice(0, 5).map(u => (
-              <li key={u.id}><button onClick={() => goUniversity(u.slug)} className="hover:text-white">{u.short}</button></li>
+              <li key={u.id}><button onClick={() => goUniversity(u.slug)} className="hover:text-white transition-colors">{u.short}</button></li>
             ))}
           </ul>
         </div>
       </div>
-      <div className="border-t border-white/10 py-4 text-center text-xs text-white/50">
+      <div className="relative border-t border-white/10 py-4 text-center text-xs text-white/45">
         © {new Date().getFullYear()} {t('brand')}. {t('footer.rights')}
       </div>
     </footer>
@@ -1171,28 +1173,60 @@ function Footer({ t, config, setView, goUniversity }) {
 // Modals
 // ---------------------------------------------------------------------------
 function AuthModal({ t, onClose, setAuth }) {
+  const [mode, setMode] = useState('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [city, setCity] = useState('Girne');
+  const [isAgency, setIsAgency] = useState(false);
+  const [agencyName, setAgencyName] = useState('');
   const [role, setRole] = useState('student');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
-  const realAuth = async (mode) => {
+  const inp = 'w-full h-11 rounded-xl border border-slate-200/90 bg-white px-3 text-sm mt-1 outline-none focus:ring-2 focus:ring-[#0a4d68]/25';
+
+  const realAuth = async (authMode) => {
     const supabase = createClient();
     if (!supabase) { setMsg(t('auth.err_config')); return; }
     setBusy(true); setMsg('');
     try {
-      if (mode === 'signup') {
+      if (authMode === 'signup') {
+        if (!fullName.trim() || fullName.trim().length < 2) { setMsg(t('auth.err_name')); setBusy(false); return; }
+        if (!phone.trim() || phone.replace(/\D/g, '').length < 10) { setMsg(t('auth.err_phone')); setBusy(false); return; }
+        if (role === 'landlord' && isAgency && !agencyName.trim()) { setMsg(t('auth.err_agency')); setBusy(false); return; }
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { role, full_name: email.split('@')[0] } },
+          options: {
+            data: {
+              role,
+              full_name: fullName.trim(),
+              phone_e164: phone.trim(),
+              city,
+              is_agency: isAgency,
+              agency_name: agencyName.trim() || null,
+            },
+          },
         });
         if (error) { setMsg(error.message); setBusy(false); return; }
         if (data.session) {
           setAccessToken(data.session.access_token);
+          const profilePayload = {
+            full_name: fullName.trim(),
+            phone_e164: phone.trim(),
+            city,
+            is_agency: isAgency,
+            agency_name: agencyName.trim() || null,
+            display_name: fullName.trim(),
+            request_verification: role === 'landlord',
+          };
           if (role === 'landlord') {
-            await api('my/become-landlord', { method: 'POST', body: JSON.stringify({}) });
+            await api('my/become-landlord', { method: 'POST', body: JSON.stringify(profilePayload) });
+          } else {
+            await api('my/profile', { method: 'POST', body: JSON.stringify(profilePayload) });
           }
           setAuth({
             signedIn: true,
@@ -1224,36 +1258,80 @@ function AuthModal({ t, onClose, setAuth }) {
 
   return (
     <Overlay onClose={onClose}>
-      <h2 className="text-lg font-bold text-[#0a3d54]">{t('auth.title')}</h2>
-      <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-3 py-2 mt-2">{t('auth.note')}</p>
-      <div className="mt-4 space-y-3">
-        <div>
-          <label className="text-xs font-semibold text-slate-500">{t('auth.role')}</label>
-          <div className="mt-1 grid grid-cols-2 gap-2">
-            {[['student', t('auth.student')], ['landlord', t('auth.landlord')]].map(([k, label]) => (
-              <button key={k} type="button" onClick={() => setRole(k)}
-                className={`h-10 rounded-xl text-sm font-semibold border ${role === k ? 'bg-[#0a4d68] text-white border-[#0a4d68]' : 'bg-white text-slate-600 border-slate-200'}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1">{t('auth.role_hint')}</p>
-        </div>
+      <h2 className="ko-display text-xl font-semibold text-[#0a3d54]">{t('auth.title')}</h2>
+      <p className="text-xs text-slate-600 bg-[var(--ko-mist)] rounded-xl px-3 py-2 mt-2">{t('auth.note')}</p>
+
+      <div className="mt-4 grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100">
+        {[['signin', t('auth.signin')], ['signup', t('auth.signup')]].map(([k, label]) => (
+          <button key={k} type="button" onClick={() => { setMode(k); setMsg(''); }}
+            className={`h-9 rounded-lg text-sm font-semibold transition ${mode === k ? 'bg-white text-[#0a4d68] shadow-sm' : 'text-slate-500'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 space-y-3 max-h-[65vh] overflow-y-auto pe-1">
+        {mode === 'signup' && (
+          <>
+            <div>
+              <label className="text-xs font-semibold text-slate-500">{t('auth.role')}</label>
+              <div className="mt-1 grid grid-cols-2 gap-2">
+                {[['student', t('auth.student')], ['landlord', t('auth.landlord')]].map(([k, label]) => (
+                  <button key={k} type="button" onClick={() => setRole(k)}
+                    className={`h-10 rounded-xl text-sm font-semibold border ${role === k ? 'bg-[#0a4d68] text-white border-[#0a4d68]' : 'bg-white text-slate-600 border-slate-200'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">{t('auth.role_hint')}</p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500">{t('auth.full_name')} *</label>
+              <input value={fullName} onChange={e => setFullName(e.target.value)} autoComplete="name" className={inp} placeholder={t('auth.ph_name')} />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500">{t('auth.phone')} *</label>
+              <input dir="ltr" value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel" className={inp} placeholder="+90 533 ..." />
+              <p className="text-[11px] text-slate-400 mt-1">{t('auth.phone_hint')}</p>
+            </div>
+            {role === 'landlord' && (
+              <>
+                <div>
+                  <label className="text-xs font-semibold text-slate-500">{t('auth.city')}</label>
+                  <select value={city} onChange={e => setCity(e.target.value)} className={inp}>
+                    {['Girne', 'Lefkoşa', 'Gazimağusa', 'Güzelyurt', 'İskele'].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={isAgency} onChange={e => setIsAgency(e.target.checked)} />
+                  {t('auth.is_agency')}
+                </label>
+                {isAgency && (
+                  <div>
+                    <label className="text-xs font-semibold text-slate-500">{t('auth.agency_name')} *</label>
+                    <input value={agencyName} onChange={e => setAgencyName(e.target.value)} className={inp} />
+                  </div>
+                )}
+                <p className="text-[11px] leading-relaxed text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                  {t('auth.verify_note')}
+                </p>
+              </>
+            )}
+          </>
+        )}
         <div>
           <label className="text-xs font-semibold text-slate-500">{t('auth.email')}</label>
-          <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email"
-            className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm mt-1 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" className={inp} />
         </div>
         <div>
           <label className="text-xs font-semibold text-slate-500">{t('auth.password')}</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password"
-            className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm mt-1 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} className={inp} />
         </div>
-        {msg && <p className="text-xs text-slate-600 bg-slate-100 rounded-lg px-3 py-2">{msg}</p>}
-        <div className="grid grid-cols-2 gap-2">
-          <button disabled={busy} onClick={() => realAuth('signin')} className="h-11 rounded-xl bg-[#0a4d68] text-white font-semibold disabled:opacity-60">{t('auth.signin')}</button>
-          <button disabled={busy} onClick={() => realAuth('signup')} className="h-11 rounded-xl border border-[#0a4d68] text-[#0a4d68] font-semibold disabled:opacity-60">{t('auth.signup')}</button>
-        </div>
+        {msg && <p className="text-xs text-slate-700 bg-slate-100 rounded-xl px-3 py-2">{msg}</p>}
+        <button disabled={busy} onClick={() => realAuth(mode)}
+          className="w-full h-11 rounded-xl bg-[#0a4d68] text-white font-semibold disabled:opacity-60 shadow-sm shadow-[#0a4d68]/20">
+          {busy ? t('common.loading') : (mode === 'signup' ? t('auth.signup') : t('auth.signin'))}
+        </button>
         {ALLOW_DEMO_AUTH && (
           <button
             onClick={() => {
@@ -1345,9 +1423,9 @@ function ReportModal({ t, refCode, onClose }) {
 
 function Overlay({ children, onClose }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md relative" onClick={e => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute top-4 end-4 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-[#062636]/55 backdrop-blur-[2px]" onClick={onClose}>
+      <div className="bg-white rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 w-full max-w-md relative shadow-2xl shadow-black/20 max-h-[92vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-4 end-4 h-8 w-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-700 flex items-center justify-center"><X className="h-4 w-4" /></button>
         {children}
       </div>
     </div>
