@@ -10,6 +10,7 @@ import {
 import { api as apiFetch, getAccessToken } from '@/lib/api-client';
 import { createClient } from '@/lib/supabase/client';
 import { nearestCity, requestUserLocation } from '@/lib/geo-client';
+import { KKTC_CITIES } from '@/lib/universities';
 
 const AnalyticsChart = dynamic(() => import('@/components/AnalyticsChart'), {
   ssr: false,
@@ -322,7 +323,10 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
   const selCls = 'w-full h-11 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/30';
   const labelCls = 'text-xs font-semibold text-slate-500 mb-1 block';
   const unis = config?.all_universities || config?.universities || [];
-  const cities = config?.cities?.length ? config.cities : ['Girne', 'Lefkoşa', 'Gazimağusa', 'Güzelyurt'];
+  const cities = [
+    ...KKTC_CITIES,
+    ...(config?.cities || []).filter((c) => c && !KKTC_CITIES.includes(c)),
+  ];
 
   return (
     <div className="container py-8">
@@ -1182,7 +1186,7 @@ export function AdminView({ t, locale, auth }) {
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <span className={`text-xs rounded-full px-2 py-0.5 font-semibold ${u.status === 'active' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-red-50 text-red-600'}`}>{u.status}</span>
-                  {u.role === 'landlord' && u.landlord_id && u.verification_status !== 'verified' && (
+                  {u.landlord_id && u.verification_status !== 'verified' && (
                     <button
                       type="button"
                       onClick={() => act('admin/landlords/verify', { landlord_id: u.landlord_id, user_id: u.id, status: 'verified' }, 'users')}
@@ -1191,7 +1195,7 @@ export function AdminView({ t, locale, auth }) {
                       <BadgeCheck className="h-3.5 w-3.5" /> {t('admin.verify_landlord')}
                     </button>
                   )}
-                  {u.role === 'landlord' && u.landlord_id && u.verification_status === 'pending' && (
+                  {u.landlord_id && u.verification_status === 'pending' && (
                     <button
                       type="button"
                       onClick={() => act('admin/landlords/verify', { landlord_id: u.landlord_id, user_id: u.id, status: 'rejected' }, 'users')}
@@ -1200,7 +1204,7 @@ export function AdminView({ t, locale, auth }) {
                       {t('admin.reject_verify')}
                     </button>
                   )}
-                  {u.role === 'landlord' && u.landlord_id && u.verification_status === 'verified' && (
+                  {u.landlord_id && u.verification_status === 'verified' && (
                     <button
                       type="button"
                       onClick={() => act('admin/landlords/verify', { landlord_id: u.landlord_id, user_id: u.id, status: 'unverified' }, 'users')}

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Camera, User, Mail, Phone, MapPin, GraduationCap, Save, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api-client';
+import { KKTC_CITIES } from '@/lib/universities';
 
 const inp =
   'w-full h-11 rounded-xl border border-slate-200 bg-white px-3.5 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/25 focus:border-[#0a4d68]/40';
@@ -25,7 +26,10 @@ export default function ProfileView({ t, locale, currency, setLocale, setCurrenc
   const [msgOk, setMsgOk] = useState(false);
   const fileRef = useRef(null);
 
-  const cities = config?.cities || ['Girne', 'Lefkoşa', 'Gazimağusa', 'Güzelyurt', 'İskele'];
+  const cities = [
+    ...KKTC_CITIES,
+    ...(config?.cities || []).filter((c) => c && !KKTC_CITIES.includes(c)),
+  ];
   const unis = config?.universities || [];
 
   useEffect(() => {

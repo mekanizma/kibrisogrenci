@@ -24,6 +24,7 @@ import {
   requestUserLocation,
   setGeoPref,
 } from '@/lib/geo-client';
+import { KKTC_CITIES } from '@/lib/universities';
 
 const DashboardView = dynamic(
   () => import('@/components/panels').then((m) => m.DashboardView),
@@ -402,7 +403,7 @@ export default function App() {
           signedIn: true,
           studentId: session.user.id,
           email: session.user.email,
-          role: session.user.app_metadata?.role || session.user.user_metadata?.role || 'student',
+          role: session.user.app_metadata?.role || session.user.user_metadata?.role || 'landlord',
           accessToken: session.access_token,
         });
       } else {
@@ -724,7 +725,7 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
     verified_landlords: stats?.verified_landlords ?? 0,
     cities: stats?.cities ?? new Set(unis.map((u) => u.city).filter(Boolean)).size,
   };
-  const CITY_ORDER = ['Lefkoşa', 'Gazimağusa', 'Girne', 'Güzelyurt', 'Lefke'];
+  const CITY_ORDER = KKTC_CITIES;
   const unisByCity = (() => {
     const map = new Map();
     for (const u of unis) {
@@ -1299,7 +1300,11 @@ const AMENITY_KEYS = Object.keys(AMENITY);
 
 function SearchView({ t, locale, currency, fx, config, goListing, initialFilters, userLoc, requestLocation }) {
   const unis = config?.universities || [];
-  const cities = config?.cities || [];
+  // Always show full KKTC city list in filters (config may be stale/cached)
+  const cities = [
+    ...KKTC_CITIES,
+    ...(config?.cities || []).filter((c) => c && !KKTC_CITIES.includes(c)),
+  ];
   const [f, setF] = useState({
     university: initialFilters?.university || '',
     city: initialFilters?.city || '', property_type: initialFilters?.property_type || '', bedrooms: '', gender: '',
@@ -2388,7 +2393,6 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
   const [city, setCity] = useState('Girne');
   const [isAgency, setIsAgency] = useState(false);
   const [agencyName, setAgencyName] = useState('');
-  const [role, setRole] = useState('student');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [msgOk, setMsgOk] = useState(false);
@@ -2417,7 +2421,7 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
     if (password !== password2) return t('auth.err_password_match');
     if (!fullName.trim() || fullName.trim().length < 2) return t('auth.err_name');
     if (!phone.trim() || phone.replace(/\D/g, '').length < 10) return t('auth.err_phone');
-    if (role === 'landlord' && isAgency && !agencyName.trim()) return t('auth.err_agency');
+    if (isAgency && !agencyName.trim()) return t('auth.err_agency');
     return null;
   };
 
@@ -2451,7 +2455,8 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
           options: {
             emailRedirectTo: `${siteUrl}/`,
             data: {
-              role,
+              // Single free account type — everyone can search and list
+              role: 'landlord',
               full_name: fullName.trim(),
               phone_e164: phone.trim(),
               city,
@@ -2471,18 +2476,15 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
             is_agency: isAgency,
             agency_name: agencyName.trim() || null,
             display_name: fullName.trim(),
-            request_verification: role === 'landlord',
+            request_verification: false,
           };
-          if (role === 'landlord') {
-            await api('my/become-landlord', { method: 'POST', body: JSON.stringify(profilePayload) }).catch(() => {});
-          } else {
-            await api('my/profile', { method: 'POST', body: JSON.stringify(profilePayload) }).catch(() => {});
-          }
+          // Ensure listing capability for every new account
+          await api('my/become-landlord', { method: 'POST', body: JSON.stringify(profilePayload) }).catch(() => {});
           setAuth({
             signedIn: true,
             studentId: data.user.id,
             email: data.user.email,
-            role: role === 'landlord' ? 'landlord' : (data.user.app_metadata?.role || 'student'),
+            role: data.user.app_metadata?.role || 'landlord',
             accessToken: data.session.access_token,
           });
           onClose();
@@ -2498,7 +2500,7 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
         });
         if (error) { setMsg(mapAuthError(error)); setBusy(false); return; }
         setAccessToken(data.session.access_token);
-        const metaRole = data.user.app_metadata?.role || data.user.user_metadata?.role || 'student';
+        const metaRole = data.user.app_metadata?.role || data.user.user_metadata?.role || 'landlord';
         setAuth({
           signedIn: true,
           studentId: data.user.id,
@@ -2544,6 +2546,11 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
         <p className="text-sm text-slate-500 mt-1">
           {mode === 'signup' ? t('auth.signup_sub') : t('auth.signin_sub')}
         </p>
+        {mode === 'signup' && (
+          <span className="mt-2 inline-flex items-center rounded-md bg-[#dcfce7] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#15803d]">
+            {t('auth.free_badge')}
+          </span>
+        )}
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-100">
@@ -2562,30 +2569,6 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
         {mode === 'signup' && (
           <>
             <div>
-              <label className="text-xs font-semibold text-slate-500">{t('auth.role')}</label>
-              <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {[
-                  ['student', t('auth.student'), t('auth.student_hint'), GraduationCap, true],
-                  ['landlord', t('auth.landlord'), t('auth.landlord_hint'), Building2, false],
-                ].map(([k, label, hint, Icon, free]) => (
-                  <button key={k} type="button" onClick={() => setRole(k)}
-                    className={`relative text-start rounded-2xl border p-3.5 transition ${role === k ? 'border-[#0a4d68] bg-[#e8f2f6] ring-1 ring-[#0a4d68]/25' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                    {free && (
-                      <span className="absolute top-2.5 end-2.5 text-[10px] font-bold uppercase tracking-wide text-[#15803d] bg-[#dcfce7] px-1.5 py-0.5 rounded-md">
-                        {t('auth.free_badge')}
-                      </span>
-                    )}
-                    <div className={`h-9 w-9 rounded-xl flex items-center justify-center ${role === k ? 'bg-[#0a4d68] text-white' : 'bg-slate-100 text-slate-500'}`}>
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <div className="font-semibold text-[#0a3d54] mt-2 text-sm">{label}</div>
-                    <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">{hint}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
               <label className="text-xs font-semibold text-slate-500">{t('auth.full_name')} *</label>
               <div className="relative">
                 <User className="absolute start-3.5 top-[1.35rem] h-4 w-4 text-slate-400 pointer-events-none" />
@@ -2599,29 +2582,24 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
                 className={inp} placeholder="+90 533 ..." inputMode="tel" />
               <p className="text-[11px] text-slate-400 mt-1">{t('auth.phone_hint')}</p>
             </div>
-
-            {role === 'landlord' && (
-              <div className="space-y-3 rounded-2xl border border-amber-100 bg-amber-50/60 p-3.5">
-                <div>
-                  <label className="text-xs font-semibold text-slate-500">{t('auth.city')}</label>
-                  <select value={city} onChange={e => setCity(e.target.value)} className={inp}>
-                    {['Girne', 'Lefkoşa', 'Gazimağusa', 'Güzelyurt', 'İskele'].map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <label className="flex items-center gap-2.5 text-sm text-slate-700 min-h-11">
-                  <input type="checkbox" checked={isAgency} onChange={e => setIsAgency(e.target.checked)}
-                    className="h-4 w-4 rounded accent-[#0a4d68]" />
-                  {t('auth.is_agency')}
-                </label>
-                {isAgency && (
-                  <div>
-                    <label className="text-xs font-semibold text-slate-500">{t('auth.agency_name')} *</label>
-                    <input value={agencyName} onChange={e => setAgencyName(e.target.value)} className={inp} />
-                  </div>
-                )}
-                <p className="text-[11px] leading-relaxed text-amber-900/80">{t('auth.verify_note')}</p>
+            <div>
+              <label className="text-xs font-semibold text-slate-500">{t('auth.city')}</label>
+              <select value={city} onChange={e => setCity(e.target.value)} className={inp}>
+                {KKTC_CITIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <label className="flex items-center gap-2.5 text-sm text-slate-700 min-h-11">
+              <input type="checkbox" checked={isAgency} onChange={e => setIsAgency(e.target.checked)}
+                className="h-4 w-4 rounded accent-[#0a4d68]" />
+              {t('auth.is_agency')}
+            </label>
+            {isAgency && (
+              <div>
+                <label className="text-xs font-semibold text-slate-500">{t('auth.agency_name')} *</label>
+                <input value={agencyName} onChange={e => setAgencyName(e.target.value)} className={inp} />
               </div>
             )}
+            <p className="text-[11px] leading-relaxed text-slate-500">{t('auth.unified_note')}</p>
           </>
         )}
 
@@ -2683,12 +2661,12 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
         {ALLOW_DEMO_AUTH && (
           <button type="button"
             onClick={() => {
-              setAuth({ signedIn: true, studentId: `demo-${Math.random().toString(36).slice(2, 8)}`, email: email || 'student@demo', role });
+              setAuth({ signedIn: true, studentId: `demo-${Math.random().toString(36).slice(2, 8)}`, email: email || 'user@demo', role: 'landlord' });
               onClose();
             }}
             className="w-full h-11 rounded-2xl border border-slate-200 text-slate-600 font-semibold text-sm"
           >
-            {t('auth.as_student')}
+            {t('auth.as_demo')}
           </button>
         )}
       </form>

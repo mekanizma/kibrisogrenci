@@ -1,5 +1,4 @@
--- Paste into Supabase Dashboard → SQL Editor → Run
--- Unified free signup: every new user can search and list (landlord_profiles created).
+-- Unified free signup: every user can list; always create landlord_profiles.
 
 create or replace function public.handle_new_user()
 returns trigger
@@ -18,13 +17,11 @@ declare
   v_agency boolean := coalesce((new.raw_user_meta_data->>'is_agency')::boolean, false);
   v_agency_name text := nullif(trim(new.raw_user_meta_data->>'agency_name'), '');
 begin
-  -- Keep admin if somehow set; otherwise unify as landlord (can list + search)
   if v_role = 'admin' then
     null;
   elsif v_role not in ('student', 'landlord') then
     v_role := 'landlord';
   else
-    -- New signups default to landlord capability (student kept only if explicitly set)
     if v_role = 'student' then
       v_role := 'landlord';
     end if;
@@ -43,7 +40,6 @@ begin
     phone_e164 = coalesce(excluded.phone_e164, public.profiles.phone_e164),
     preferred_language = coalesce(excluded.preferred_language, public.profiles.preferred_language);
 
-  -- Everyone gets a landlord profile so they can publish listings
   if v_role <> 'admin' then
     if not exists (select 1 from public.landlord_profiles lp where lp.user_id = new.id) then
       insert into public.landlord_profiles (user_id, display_name, is_agency, agency_name)
@@ -61,8 +57,3 @@ begin
   return new;
 end;
 $$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute function public.handle_new_user();

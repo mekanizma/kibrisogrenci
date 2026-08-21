@@ -6,6 +6,7 @@ import {
 } from '@/lib/seed';
 import { getRequestUser, requireUser, requireAdmin, isMockMode, hashIp } from '@/lib/auth';
 import * as db from '@/lib/db';
+import { KKTC_CITIES } from '@/lib/universities';
 
 const json = (data, status = 200, cache = 'no-store') =>
   NextResponse.json(data, { status, headers: { 'Cache-Control': cache } });
@@ -258,9 +259,9 @@ async function handleMock(request, route, path, method, sp) {
       stats: {
         listings: LISTINGS.length, universities: mapped.length,
         verified_landlords: [...new Set(LISTINGS.filter((l) => l.landlord.verified).map((l) => l.landlord.name))].length,
-        cities: [...new Set(LISTINGS.map((l) => l.city))].length,
+        cities: KKTC_CITIES.length,
       },
-      cities: [...new Set(LISTINGS.map((l) => l.city))],
+      cities: KKTC_CITIES,
       mock: true,
     }, 200, PUBLIC_CACHE);
   }
