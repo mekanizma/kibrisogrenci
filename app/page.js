@@ -5,7 +5,7 @@ import {
   Search, MapPin, ShieldCheck, BadgeCheck, Wifi, Snowflake, Car, Waves,
   Dumbbell, AlertTriangle, ChevronLeft, Menu, Globe, TrendingDown, TrendingUp,
   Phone, MessageCircle, X, Check, GraduationCap, Building2, Info, Clock,
-  BedDouble, Bath, Maximize, Flag, Lock, Sofa, Trees, ShieldAlert, Waypoints, Users, Heart,
+  BedDouble, Bath, Maximize, Flag, Lock, Sofa, Trees, ShieldAlert, Waypoints, Users, Heart, SlidersHorizontal,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -124,11 +124,16 @@ function ListingCard({ l, t, locale, currency, fx, onOpen }) {
             </span>
           )}
         </div>
-        <div className="absolute bottom-2 start-2">
-          <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68] text-white px-2 py-1 text-[11px] font-semibold shadow">
-            <Waypoints className="h-3 w-3" /> {l.walking_minutes} dk · {(l.distance_m / 1000).toFixed(1)}km
-          </span>
-        </div>
+        {(l.walking_minutes != null || l.distance_m != null) && (
+          <div className="absolute bottom-2 start-2">
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68] text-white px-2 py-1 text-[11px] font-semibold shadow">
+              <Waypoints className="h-3 w-3" />
+              {l.walking_minutes != null ? `${l.walking_minutes} dk` : ''}
+              {l.walking_minutes != null && l.distance_m != null ? ' · ' : ''}
+              {l.distance_m != null ? `${(Number(l.distance_m) / 1000).toFixed(1)}km` : ''}
+            </span>
+          </div>
+        )}
       </div>
       <div className="p-4 flex flex-col gap-2 flex-1">
         <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -144,7 +149,7 @@ function ListingCard({ l, t, locale, currency, fx, onOpen }) {
             ? <span>{t('listing.private_room')}</span>
             : (l.bedrooms > 0 ? <span>{l.bedrooms} {t('listing.bedrooms_n')}</span> : <span>{t('ptype.studio')}</span>)}
           <span>·</span>
-          <span>{l.size_sqm} m²</span>
+          {l.size_sqm ? <span>{l.size_sqm} m²</span> : null}
         </div>
         {l.room_share && (
           <span className="inline-flex w-fit items-center gap-1 rounded-full bg-[#0a4d68]/10 text-[#0a4d68] px-2 py-0.5 text-[11px] font-semibold">
@@ -192,8 +197,11 @@ function MapCircle({ l, t }) {
 }
 
 function PriceHistoryChart({ history, currency, fx, locale, t }) {
+  if (!history?.length) {
+    return <p className="text-sm text-slate-400 py-6 text-center">{t('priceindex.no_history')}</p>;
+  }
   const data = history.map(h => ({
-    date: new Date(h.changed_at).toLocaleDateString(LOCALE_TAG[locale], { month: 'short' }),
+    date: new Date(h.changed_at).toLocaleDateString(LOCALE_TAG[locale] || 'en-GB', { month: 'short' }),
     value: convertMoney(h.price.amount, h.price.currency, currency, fx),
   }));
   return (
@@ -526,9 +534,12 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchErr, setSearchErr] = useState(false);
 
   const runSearch = useCallback(() => {
     setLoading(true);
+    setSearchErr(false);
     const p = new URLSearchParams();
     if (f.university) p.set('university', f.university);
     if (f.city) p.set('city', f.city);
@@ -540,13 +551,12 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
     if (f.verified_only) p.set('verified_only', 'true');
     if (f.max_walk) p.set('max_walk', f.max_walk);
     if (f.amenities.length) p.set('amenities', f.amenities.join(','));
-    // price inputs are in display currency -> convert to GBP for the API
     if (f.price_min) p.set('price_min', convertMoney(Number(f.price_min), currency, 'GBP', fx));
     if (f.price_max) p.set('price_max', convertMoney(Number(f.price_max), currency, 'GBP', fx));
     p.set('sort', f.sort);
     api(`listings?${p.toString()}`).then(r => r.json()).then(d => {
       setItems(d.items || []); setTotal(d.total || 0); setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => { setLoading(false); setSearchErr(true); setItems([]); setTotal(0); });
   }, [f, currency, fx]);
 
   useEffect(() => { runSearch(); }, [runSearch]);
@@ -562,82 +572,108 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
   );
   const selCls = 'w-full h-10 rounded-lg border border-slate-200 bg-white px-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/30';
 
+  const FiltersBody = (
+    <>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-bold text-[#0a3d54]">{t('search.filters')}</h2>
+        <button onClick={clear} className="text-xs font-semibold text-[#0a4d68] hover:underline">{t('search.clear')}</button>
+      </div>
+      <FilterField label={t('search.university')}>
+        <select className={selCls} value={f.university} onChange={e => setF(s => ({ ...s, university: e.target.value }))}>
+          <option value="">{t('search.any_university')}</option>
+          {unis.map(u => <option key={u.id} value={u.id}>{u.short || u.name_tr || u.name_en}</option>)}
+        </select>
+      </FilterField>
+      <FilterField label={t('search.max_walk')}>
+        <select className={selCls} value={f.max_walk} onChange={e => setF(s => ({ ...s, max_walk: e.target.value }))}>
+          <option value="">{t('search.any')}</option>
+          {[5, 10, 15, 20, 30].map(w => <option key={w} value={w}>{w} dk</option>)}
+        </select>
+      </FilterField>
+      <FilterField label={t('search.city')}>
+        <select className={selCls} value={f.city} onChange={e => setF(s => ({ ...s, city: e.target.value }))}>
+          <option value="">{t('search.any_city')}</option>
+          {cities.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </FilterField>
+      <FilterField label={`${t('search.price_range')} (${SYMBOL[currency]})`}>
+        <div className="flex gap-2">
+          <input type="number" placeholder="min" className={selCls} value={f.price_min} onChange={e => setF(s => ({ ...s, price_min: e.target.value }))} />
+          <input type="number" placeholder="max" className={selCls} value={f.price_max} onChange={e => setF(s => ({ ...s, price_max: e.target.value }))} />
+        </div>
+      </FilterField>
+      <FilterField label={t('search.property_type')}>
+        <select className={selCls} value={f.property_type} onChange={e => setF(s => ({ ...s, property_type: e.target.value }))}>
+          <option value="">{t('search.any')}</option>
+          {['apartment', 'studio', 'room', 'house'].map(p => <option key={p} value={p}>{t(`ptype.${p}`)}</option>)}
+        </select>
+      </FilterField>
+      <FilterField label={t('search.bedrooms')}>
+        <select className={selCls} value={f.bedrooms} onChange={e => setF(s => ({ ...s, bedrooms: e.target.value }))}>
+          <option value="">{t('search.any')}</option>
+          {[0, 1, 2, 3].map(b => <option key={b} value={b}>{b === 0 ? t('ptype.studio') : `${b}+`}</option>)}
+        </select>
+      </FilterField>
+      <FilterField label={t('search.gender')}>
+        <select className={selCls} value={f.gender} onChange={e => setF(s => ({ ...s, gender: e.target.value }))}>
+          <option value="">{t('gender.any')}</option>
+          <option value="female">{t('gender.female')}</option>
+          <option value="male">{t('gender.male')}</option>
+        </select>
+      </FilterField>
+      <div className="space-y-2.5 mb-4">
+        {[['furnished', t('search.furnished')], ['bills_included', t('search.bills_included')], ['verified_only', t('search.verified_only')]].map(([k, label]) => (
+          <label key={k} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" checked={f[k]} onChange={e => setF(s => ({ ...s, [k]: e.target.checked }))}
+              className="h-4 w-4 rounded border-slate-300 accent-[#0a4d68]" />
+            {label}
+          </label>
+        ))}
+      </div>
+      <FilterField label={t('search.amenities')}>
+        <div className="flex flex-wrap gap-1.5">
+          {AMENITY_KEYS.map(a => (
+            <button key={a} type="button" onClick={() => toggleAmenity(a)}
+              className={`text-xs rounded-full px-2.5 py-1 border ${f.amenities.includes(a) ? 'bg-[#0a4d68] text-white border-[#0a4d68]' : 'bg-white text-slate-600 border-slate-200'}`}>
+              {t(`amenity.${a}`) !== `amenity.${a}` ? t(`amenity.${a}`) : (AMENITY[a]?.en || a)}
+            </button>
+          ))}
+        </div>
+      </FilterField>
+      <button type="button" onClick={() => { setFiltersOpen(false); runSearch(); }} className="lg:hidden w-full h-11 rounded-xl bg-[#0a4d68] text-white font-semibold mt-2">
+        {t('search.button')}
+      </button>
+    </>
+  );
+
   return (
     <div className="container py-8">
+      <div className="lg:hidden mb-4">
+        <button type="button" onClick={() => setFiltersOpen(true)}
+          className="inline-flex items-center gap-2 h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-[#0a4d68]">
+          <SlidersHorizontal className="h-4 w-4" /> {t('search.filters')}
+        </button>
+      </div>
+
+      {filtersOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-black/40" onClick={() => setFiltersOpen(false)}>
+          <div className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-2">
+              <span className="font-bold text-[#0a3d54]">{t('search.filters')}</span>
+              <button type="button" onClick={() => setFiltersOpen(false)}><X className="h-5 w-5 text-slate-400" /></button>
+            </div>
+            {FiltersBody}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6">
-        {/* Filters */}
-        <aside className="lg:sticky lg:top-24 h-fit bg-white rounded-2xl border border-slate-200 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-bold text-[#0a3d54]">{t('search.filters')}</h2>
-            <button onClick={clear} className="text-xs font-semibold text-[#0a4d68] hover:underline">{t('search.clear')}</button>
-          </div>
-          <FilterField label={t('search.university')}>
-            <select className={selCls} value={f.university} onChange={e => setF(s => ({ ...s, university: e.target.value }))}>
-              <option value="">{t('search.any_university')}</option>
-              {unis.map(u => <option key={u.id} value={u.id}>{u.short}</option>)}
-            </select>
-          </FilterField>
-          <FilterField label={t('search.max_walk')}>
-            <select className={selCls} value={f.max_walk} onChange={e => setF(s => ({ ...s, max_walk: e.target.value }))}>
-              <option value="">{t('search.any')}</option>
-              {[5, 10, 15, 20, 30].map(w => <option key={w} value={w}>{w} dk</option>)}
-            </select>
-          </FilterField>
-          <FilterField label={t('search.city')}>
-            <select className={selCls} value={f.city} onChange={e => setF(s => ({ ...s, city: e.target.value }))}>
-              <option value="">{t('search.any_city')}</option>
-              {cities.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </FilterField>
-          <FilterField label={`${t('search.price_range')} (${SYMBOL[currency]})`}>
-            <div className="flex gap-2">
-              <input type="number" placeholder="min" className={selCls} value={f.price_min} onChange={e => setF(s => ({ ...s, price_min: e.target.value }))} />
-              <input type="number" placeholder="max" className={selCls} value={f.price_max} onChange={e => setF(s => ({ ...s, price_max: e.target.value }))} />
-            </div>
-          </FilterField>
-          <FilterField label={t('search.property_type')}>
-            <select className={selCls} value={f.property_type} onChange={e => setF(s => ({ ...s, property_type: e.target.value }))}>
-              <option value="">{t('search.any')}</option>
-              {['apartment', 'studio', 'room', 'house'].map(p => <option key={p} value={p}>{t(`ptype.${p}`)}</option>)}
-            </select>
-          </FilterField>
-          <FilterField label={t('search.bedrooms')}>
-            <select className={selCls} value={f.bedrooms} onChange={e => setF(s => ({ ...s, bedrooms: e.target.value }))}>
-              <option value="">{t('search.any')}</option>
-              {[0, 1, 2, 3].map(b => <option key={b} value={b}>{b === 0 ? t('ptype.studio') : `${b}+`}</option>)}
-            </select>
-          </FilterField>
-          <FilterField label={t('search.gender')}>
-            <select className={selCls} value={f.gender} onChange={e => setF(s => ({ ...s, gender: e.target.value }))}>
-              <option value="">{t('gender.any')}</option>
-              <option value="female">{t('gender.female')}</option>
-              <option value="male">{t('gender.male')}</option>
-            </select>
-          </FilterField>
-          <div className="space-y-2.5 mb-4">
-            {[['furnished', t('search.furnished')], ['bills_included', t('search.bills_included')], ['verified_only', t('search.verified_only')]].map(([k, label]) => (
-              <label key={k} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-                <input type="checkbox" checked={f[k]} onChange={e => setF(s => ({ ...s, [k]: e.target.checked }))}
-                  className="h-4 w-4 rounded border-slate-300 accent-[#0a4d68]" />
-                {label}
-              </label>
-            ))}
-          </div>
-          <FilterField label={t('search.amenities')}>
-            <div className="flex flex-wrap gap-1.5">
-              {AMENITY_KEYS.map(a => (
-                <button key={a} onClick={() => toggleAmenity(a)}
-                  className={`text-xs rounded-full px-2.5 py-1 border ${f.amenities.includes(a) ? 'bg-[#0a4d68] text-white border-[#0a4d68]' : 'bg-white text-slate-600 border-slate-200'}`}>
-                  {AMENITY[a][locale]}
-                </button>
-              ))}
-            </div>
-          </FilterField>
+        <aside className="hidden lg:block lg:sticky lg:top-24 h-fit bg-white rounded-2xl border border-slate-200 p-5">
+          {FiltersBody}
         </aside>
 
-        {/* Results */}
         <div>
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-3">
             <div className="text-sm text-slate-600"><span className="font-bold text-[#0a3d54]">{total}</span> {t('search.results')}</div>
             <select className="h-10 rounded-lg border border-slate-200 bg-white px-2.5 text-sm outline-none" value={f.sort} onChange={e => setF(s => ({ ...s, sort: e.target.value }))}>
               <option value="new">{t('search.sort_new')}</option>
@@ -648,6 +684,8 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
           </div>
           {loading ? (
             <div className="text-center py-20 text-slate-400">{t('common.loading')}</div>
+          ) : searchErr ? (
+            <div className="text-center py-20 text-slate-400">{t('search.error')}</div>
           ) : items.length === 0 ? (
             <div className="text-center py-20 text-slate-400">{t('search.no_results')}</div>
           ) : (
@@ -674,8 +712,22 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
 
   useEffect(() => {
     setL(null);
-    api(`listings/${refCode}`).then(r => r.json()).then(d => { setL(d); setPhotoIdx(0); setReveal(null); }).catch(() => {});
+    setSaved(false);
+    api(`listings/${refCode}`).then(async (r) => {
+      const d = await r.json();
+      if (!r.ok || d.error || !d.id) setL({ error: true });
+      else setL(d);
+      setPhotoIdx(0);
+      setReveal(null);
+    }).catch(() => setL({ error: true }));
   }, [refCode]);
+
+  useEffect(() => {
+    if (!auth?.signedIn || !l?.id) return;
+    api('my/saved').then((r) => r.json()).then((d) => {
+      setSaved((d.items || []).some((x) => x.id === l.id));
+    }).catch(() => {});
+  }, [auth?.signedIn, l?.id]);
 
   const doReveal = async () => {
     setRevealErr('');
@@ -702,16 +754,27 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
     if (!res.ok) setSaved(!next);
   };
 
-  if (!l || l.error) return <div className="container py-20 text-center text-slate-400">{t('common.loading')}</div>;
+  if (l?.error || l === null) {
+    return (
+      <div className="container py-20 text-center">
+        <p className="text-slate-500 mb-4">{t('listing.not_found')}</p>
+        <button onClick={() => setView({ name: 'search', filters: {} })} className="h-11 px-5 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('listing.back')}</button>
+      </div>
+    );
+  }
+  if (!l) return <div className="container py-20 text-center text-slate-400">{t('common.loading')}</div>;
 
   const baseLang = listingLang(locale);
   const mt = isMachineTranslated(locale);
   const title = (mt && showOriginal) ? l.title_tr : (baseLang === 'tr' ? l.title_tr : l.title_en);
   const desc = (mt && showOriginal) ? l.description_tr : (baseLang === 'tr' ? l.description_tr : l.description_en);
   const pi = l.price_index;
-  const totalFirstMonth = l.price.currency === l.deposit.currency
-    ? { amount: l.price.amount + l.deposit.amount, currency: l.price.currency } : null;
-  const daysConfirmed = Math.floor((Date.now() - new Date(l.last_confirmed_available_at)) / 86400000);
+  const photos = Array.isArray(l.photos) && l.photos.length ? l.photos : ['/logo.svg'];
+  const totalFirstMonth = l.deposit && l.price?.currency === l.deposit.currency
+    ? { amount: Number(l.price.amount) + Number(l.deposit.amount), currency: l.price.currency } : null;
+  const daysConfirmed = l.last_confirmed_available_at
+    ? Math.max(0, Math.floor((Date.now() - new Date(l.last_confirmed_available_at)) / 86400000))
+    : null;
 
   return (
     <div className="container py-6">
@@ -725,7 +788,7 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
           {/* Gallery */}
           <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white">
             <div className="relative aspect-[16/10] bg-slate-100">
-              <img src={l.photos[photoIdx]} alt={title} className="h-full w-full object-cover" />
+              <img src={photos[photoIdx] || photos[0]} alt={title} className="h-full w-full object-cover" />
               <div className="absolute top-3 start-3 flex gap-2">
                 {l.landlord_verified && <VerifiedPill t={t} />}
                 {l.landlord_is_agency && (
@@ -736,7 +799,7 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
               </div>
             </div>
             <div className="flex gap-2 p-2 overflow-x-auto">
-              {l.photos.map((p, i) => (
+              {photos.map((p, i) => (
                 <button key={i} onClick={() => setPhotoIdx(i)}
                   className={`h-16 w-24 shrink-0 rounded-lg overflow-hidden border-2 ${i === photoIdx ? 'border-[#0a4d68]' : 'border-transparent'}`}>
                   <img src={p} alt="" className="h-full w-full object-cover" />
@@ -770,12 +833,16 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                   <Users className="h-3.5 w-3.5" /> {t('listing.shared')} · +{l.flatmates} {t('listing.flatmates')}
                 </span>
               )}
-              <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68] text-white px-2.5 py-1 text-xs font-semibold">
-                <Waypoints className="h-3.5 w-3.5" /> {l.walking_minutes} dk {t('listing.walk_to')} ({l.university?.short})
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-[#dcfce7] text-[#15803d] px-2.5 py-1 text-xs font-medium">
-                <Clock className="h-3.5 w-3.5" /> {daysConfirmed} {t('listing.confirmed')}
-              </span>
+              {l.walking_minutes != null && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68] text-white px-2.5 py-1 text-xs font-semibold">
+                  <Waypoints className="h-3.5 w-3.5" /> {l.walking_minutes} dk {t('listing.walk_to')} ({l.university?.short || '—'})
+                </span>
+              )}
+              {daysConfirmed != null && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#dcfce7] text-[#15803d] px-2.5 py-1 text-xs font-medium">
+                  <Clock className="h-3.5 w-3.5" /> {daysConfirmed} {t('listing.confirmed')}
+                </span>
+              )}
             </div>
           </div>
 
@@ -784,7 +851,7 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
             {[
               [BedDouble, l.property_type === 'room' ? t('listing.private_room') : (l.bedrooms > 0 ? `${l.bedrooms} ${t('listing.bedrooms_n')}` : t('ptype.studio'))],
               [Bath, `${l.bathrooms} ${t('listing.bathrooms_n')}`],
-              [Maximize, `${l.size_sqm} m²`],
+              [Maximize, l.size_sqm ? `${l.size_sqm} m²` : '—'],
               [Sofa, l.furnished ? t('listing.furnished_yes') : t('listing.furnished_no')],
             ].map(([Icon, label], i) => (
               <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 flex items-center gap-2">
@@ -814,12 +881,13 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
               {l.amenities.map(a => {
                 const Icon = AMENITY[a]?.icon || Check;
+                const label = t(`amenity.${a}`);
                 return (
                   <div key={a} className="flex items-center gap-2 text-sm text-slate-600">
                     <div className="h-8 w-8 rounded-lg bg-[#e8f2f6] flex items-center justify-center">
                       <Icon className="h-4 w-4 text-[#0a4d68]" />
                     </div>
-                    {AMENITY[a] ? AMENITY[a][locale] : a}
+                    {label === `amenity.${a}` ? (AMENITY[a]?.[locale] || AMENITY[a]?.en || a) : label}
                   </div>
                 );
               })}
@@ -853,8 +921,8 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
             <div className="mt-4 border-t border-slate-100 pt-4 space-y-2 text-sm">
               <div className="font-semibold text-[#0a3d54] mb-1">{t('listing.cost_breakdown')}</div>
               <Row label={t('listing.rent')} value={<PriceInline price={l.price} currency={currency} fx={fx} locale={locale} />} />
-              <Row label={t('listing.deposit')} value={<PriceInline price={l.deposit} currency={currency} fx={fx} locale={locale} />} />
-              <Row label={t('listing.bills')} value={l.bills_included ? (locale === 'tr' ? 'Dahil' : 'Included') : (l.bills_note || '—')} muted />
+              <Row label={t('listing.deposit')} value={l.deposit ? <PriceInline price={l.deposit} currency={currency} fx={fx} locale={locale} /> : '—'} />
+              <Row label={t('listing.bills')} value={l.bills_included ? t('listing.bills_included_short') : (l.bills_note || '—')} muted />
               <Row label={t('listing.agency_fee')} value={l.agency_fee_note || '—'} muted />
               {totalFirstMonth && (
                 <div className="flex items-center justify-between border-t border-slate-100 pt-2.5 mt-1">
@@ -922,13 +990,28 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
 
       {/* Similar */}
       {l.similar?.length > 0 && (
-        <div className="mt-12">
+        <div className="mt-12 mb-20 lg:mb-0">
           <h2 className="text-xl font-bold text-[#0a3d54] mb-5">{t('listing.similar')}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {l.similar.map(s => <ListingCard key={s.id} l={s} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />)}
           </div>
         </div>
       )}
+
+      {/* Mobile sticky contact */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur px-4 py-3 safe-pb">
+        {reveal ? (
+          <a href={reveal.whatsapp_url} target="_blank" rel="noreferrer"
+            className="flex items-center justify-center gap-2 h-12 rounded-xl bg-[#25D366] text-white font-semibold">
+            <MessageCircle className="h-5 w-5" /> {t('contact.whatsapp')}
+          </a>
+        ) : (
+          <button onClick={doReveal}
+            className="w-full h-12 rounded-xl bg-[#0a4d68] text-white font-semibold">
+            {auth.signedIn ? t('contact.reveal') : t('contact.signin_to_reveal')}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -942,6 +1025,7 @@ function Row({ label, value, muted }) {
   );
 }
 function PriceInline({ price, currency, fx, locale }) {
+  if (!price || price.amount == null) return <>—</>;
   const same = price.currency === currency;
   if (same) return <>{fmtMoney(price.amount, price.currency, locale)}</>;
   return <>≈ {fmtMoney(convertMoney(price.amount, price.currency, currency, fx), currency, locale)}</>;
@@ -1089,29 +1173,37 @@ function Footer({ t, config, setView, goUniversity }) {
 function AuthModal({ t, onClose, setAuth }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState('student');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
   const realAuth = async (mode) => {
     const supabase = createClient();
-    if (!supabase) { setMsg('Supabase yapılandırılmadı.'); return; }
+    if (!supabase) { setMsg(t('auth.err_config')); return; }
     setBusy(true); setMsg('');
     try {
       if (mode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { role, full_name: email.split('@')[0] } },
+        });
         if (error) { setMsg(error.message); setBusy(false); return; }
         if (data.session) {
           setAccessToken(data.session.access_token);
+          if (role === 'landlord') {
+            await api('my/become-landlord', { method: 'POST', body: JSON.stringify({}) });
+          }
           setAuth({
             signedIn: true,
             studentId: data.user.id,
             email: data.user.email,
-            role: data.user.app_metadata?.role || 'student',
+            role: role === 'landlord' ? 'landlord' : (data.user.app_metadata?.role || 'student'),
             accessToken: data.session.access_token,
           });
           onClose();
         } else {
-          setMsg('Kayıt alındı. E-posta onayı gerekiyorsa gelen kutunuzu kontrol edin.');
+          setMsg(t('auth.check_email'));
         }
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -1136,6 +1228,18 @@ function AuthModal({ t, onClose, setAuth }) {
       <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-3 py-2 mt-2">{t('auth.note')}</p>
       <div className="mt-4 space-y-3">
         <div>
+          <label className="text-xs font-semibold text-slate-500">{t('auth.role')}</label>
+          <div className="mt-1 grid grid-cols-2 gap-2">
+            {[['student', t('auth.student')], ['landlord', t('auth.landlord')]].map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setRole(k)}
+                className={`h-10 rounded-xl text-sm font-semibold border ${role === k ? 'bg-[#0a4d68] text-white border-[#0a4d68]' : 'bg-white text-slate-600 border-slate-200'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1">{t('auth.role_hint')}</p>
+        </div>
+        <div>
           <label className="text-xs font-semibold text-slate-500">{t('auth.email')}</label>
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email"
             className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm mt-1 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
@@ -1153,7 +1257,7 @@ function AuthModal({ t, onClose, setAuth }) {
         {ALLOW_DEMO_AUTH && (
           <button
             onClick={() => {
-              setAuth({ signedIn: true, studentId: `demo-${Math.random().toString(36).slice(2, 8)}`, email: email || 'student@demo' });
+              setAuth({ signedIn: true, studentId: `demo-${Math.random().toString(36).slice(2, 8)}`, email: email || 'student@demo', role });
               onClose();
             }}
             className="w-full h-11 rounded-xl border border-slate-200 text-slate-600 font-semibold"

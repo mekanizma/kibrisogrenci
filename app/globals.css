@@ -4,11 +4,17 @@
 
 body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-        "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans",
-        "Helvetica Neue", sans-serif;
+    font-family: var(--font-sans), system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background:
+      radial-gradient(1200px 500px at 10% -10%, rgba(10, 77, 104, 0.08), transparent 55%),
+      radial-gradient(900px 400px at 100% 0%, rgba(224, 162, 86, 0.08), transparent 50%),
+      #f8fafc;
+}
+
+.safe-pb {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
 
 code {

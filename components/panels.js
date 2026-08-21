@@ -1,12 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
 import {
-  Plus, Eye, Phone, Bookmark, MessageSquare, CreditCard, CheckCircle2, XCircle,
-  ShieldAlert, Users2, FileText, MapPin, Activity, Clock, Building2, Send, Bot,
-  BadgeCheck, AlertTriangle, Banknote,
+  Plus, Eye, Phone, CreditCard, CheckCircle2, XCircle,
+  ShieldAlert, Activity, Building2, Send, Bot,
+  BadgeCheck, AlertTriangle, Banknote, X, ImagePlus,
+  Pencil, Trash2,
 } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { api as apiFetch, getAccessToken } from '@/lib/api-client';
+import { createClient } from '@/lib/supabase/client';
 
 const SYMBOL = { TRY: '₺', GBP: '£', USD: '$', EUR: '€' };
 const money = (p, locale) => `${SYMBOL[p.currency] || ''}${Number(p.amount).toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}`;
@@ -19,6 +21,38 @@ const api = async (p, o = {}) => {
   return res.json();
 };
 
+const AMENITY_KEYS = [
+  'wifi', 'ac', 'parking', 'pool', 'gym', 'washing_machine', 'balcony',
+  'elevator', 'security', 'garden', 'study_room', 'furnished_kitchen', 'sea_view',
+];
+
+const EMPTY_FORM = {
+  title: '',
+  description: '',
+  property_type: 'apartment',
+  bedrooms: '1',
+  bathrooms: '1',
+  size_sqm: '',
+  max_occupants: '',
+  furnished: true,
+  bills_included: false,
+  bills_note: '',
+  gender_preference: 'any',
+  price_amount: '',
+  price_currency: 'GBP',
+  deposit_amount: '',
+  deposit_currency: 'GBP',
+  city: 'Girne',
+  neighbourhood: '',
+  address_private: '',
+  university_id: '',
+  available_from: '',
+  minimum_stay_months: '6',
+  phone_e164: '',
+  display_name: '',
+  amenities: [],
+};
+
 const STATUS_STYLE = {
   published: 'bg-[#dcfce7] text-[#15803d]', pending_review: 'bg-amber-50 text-amber-700',
   draft: 'bg-slate-100 text-slate-500', rejected: 'bg-red-50 text-red-600',
@@ -26,6 +60,32 @@ const STATUS_STYLE = {
 function StatusPill({ s, t }) {
   const label = { published: t('dash.published'), pending_review: t('dash.pending'), draft: t('dash.draft'), rejected: t('dash.rejected') }[s] || s;
   return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_STYLE[s] || 'bg-slate-100 text-slate-600'}`}>{label}</span>;
+}
+
+async function uploadListingPhotos(files) {
+  const supabase = createClient();
+  const token = getAccessToken();
+  if (!supabase || !token || !files?.length) return [];
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData?.user?.id;
+  if (!uid) throw new Error('auth');
+
+  const keys = [];
+  for (let i = 0; i < Math.min(files.length, 20); i++) {
+    const file = files[i];
+    if (!file.type.startsWith('image/')) continue;
+    if (file.size > 10 * 1024 * 1024) continue;
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const path = `${uid}/${Date.now()}-${i}.${ext}`;
+    const { error } = await supabase.storage.from('listing-photos').upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type,
+    });
+    if (error) throw error;
+    keys.push({ storage_key: path, sort_order: i });
+  }
+  return keys;
 }
 
 // ======================= LANDLORD DASHBOARD =======================
@@ -36,7 +96,12 @@ export function DashboardView({ t, locale, config, auth }) {
   const [inquiries, setInquiries] = useState([]);
   const [billing, setBilling] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ title: '', price_amount: '', price_currency: 'GBP', city: 'Girne', property_type: 'apartment' });
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ ...EMPTY_FORM });
+  const [existingPhotoKeys, setExistingPhotoKeys] = useState([]);
+  const [photoFiles, setPhotoFiles] = useState([]);
+  const [photoPreviews, setPhotoPreviews] = useState([]);
+  const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
 
   const load = () => api('my/listings').then(setData);
@@ -48,34 +113,175 @@ export function DashboardView({ t, locale, config, auth }) {
     api('my/billing').then(setBilling);
   }, [auth?.signedIn]);
 
-  const submit = async (draft) => {
-    const res = await api('my/listings', { method: 'POST', body: JSON.stringify({ ...form, draft }) });
-    if (res.error === 'quota_exceeded') { setToast('Kota doldu.'); return; }
-    if (res.error === 'auth_required') { setToast('Giriş gerekli.'); return; }
-    setToast(t('dash.submitted')); setCreating(false); load();
+  useEffect(() => {
+    const urls = photoFiles.map((f) => URL.createObjectURL(f));
+    setPhotoPreviews(urls);
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
+  }, [photoFiles]);
+
+  const setField = (k, v) => setForm((s) => ({ ...s, [k]: v }));
+  const toggleAmenity = (key) => {
+    setForm((s) => {
+      const has = s.amenities.includes(key);
+      return { ...s, amenities: has ? s.amenities.filter((a) => a !== key) : [...s.amenities, key] };
+    });
+  };
+
+  const onPickPhotos = (e) => {
+    const picked = Array.from(e.target.files || []);
+    setPhotoFiles((prev) => [...prev, ...picked].slice(0, 20));
+    e.target.value = '';
+  };
+
+  const removePhoto = (idx) => {
+    setPhotoFiles((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const validate = (draft) => {
+    if (draft) return null;
+    if (!form.title.trim() || form.title.trim().length < 5) return t('dash.err_title');
+    if (!form.description.trim() || form.description.trim().length < 20) return t('dash.err_description');
+    if (!(Number(form.price_amount) > 0)) return t('dash.err_price');
+    if (!form.city.trim()) return t('dash.err_city');
+    if (!form.neighbourhood.trim()) return t('dash.err_neighbourhood');
+    if (!form.address_private.trim()) return t('dash.err_address');
+    if (!form.phone_e164.trim()) return t('dash.err_phone');
+    if (photoFiles.length < 1 && existingPhotoKeys.length < 1) return t('dash.err_photos');
+    return null;
+  };
+
+  const resetForm = () => {
+    setCreating(false);
+    setEditingId(null);
+    setForm({ ...EMPTY_FORM });
+    setPhotoFiles([]);
+    setExistingPhotoKeys([]);
+  };
+
+  const startEdit = async (id) => {
+    setBusy(true);
+    setToast('');
+    try {
+      const res = await api(`my/listings/${id}`);
+      if (res.error || !res.item) { setToast(t('dash.err_generic')); setBusy(false); return; }
+      const it = res.item;
+      setForm({
+        ...EMPTY_FORM,
+        title: it.title || '',
+        description: it.description || '',
+        property_type: it.property_type || 'apartment',
+        bedrooms: String(it.bedrooms ?? 1),
+        bathrooms: String(it.bathrooms ?? 1),
+        size_sqm: it.size_sqm != null ? String(it.size_sqm) : '',
+        max_occupants: it.max_occupants != null ? String(it.max_occupants) : '',
+        furnished: it.furnished !== false,
+        bills_included: !!it.bills_included,
+        bills_note: it.bills_note || '',
+        gender_preference: it.gender_preference || 'any',
+        price_amount: it.price_amount != null ? String(it.price_amount) : '',
+        price_currency: it.price_currency || 'GBP',
+        deposit_amount: it.deposit_amount != null ? String(it.deposit_amount) : '',
+        deposit_currency: it.deposit_currency || 'GBP',
+        city: it.city || 'Girne',
+        neighbourhood: it.neighbourhood || '',
+        address_private: it.address_private || '',
+        university_id: it.university_id || '',
+        available_from: it.available_from ? String(it.available_from).slice(0, 10) : '',
+        minimum_stay_months: it.minimum_stay_months != null ? String(it.minimum_stay_months) : '6',
+        amenities: it.amenities || [],
+      });
+      setExistingPhotoKeys(it.photos || []);
+      setPhotoFiles([]);
+      setEditingId(id);
+      setCreating(true);
+    } catch {
+      setToast(t('dash.err_generic'));
+    }
+    setBusy(false);
+  };
+
+  const removeListing = async (id) => {
+    if (!confirm(t('dash.confirm_delete'))) return;
+    const res = await api(`my/listings/${id}`, { method: 'DELETE' });
+    if (res.error) { setToast(t('dash.err_generic')); return; }
+    setToast(t('dash.deleted'));
+    load();
     setTimeout(() => setToast(''), 3000);
+  };
+
+  const submit = async (draft) => {
+    const err = validate(draft);
+    if (err) { setToast(err); return; }
+    setBusy(true);
+    setToast('');
+    try {
+      let photos = [...existingPhotoKeys.map((k, i) => ({ storage_key: k, sort_order: i }))];
+      if (photoFiles.length) {
+        const uploaded = await uploadListingPhotos(photoFiles);
+        if (!draft && uploaded.length < 1 && photos.length < 1) {
+          setToast(t('dash.err_photos_upload'));
+          setBusy(false);
+          return;
+        }
+        photos = [...photos, ...uploaded.map((p, i) => ({ ...p, sort_order: photos.length + i }))];
+      }
+      const payload = {
+        ...form,
+        bedrooms: Number(form.bedrooms) || 0,
+        bathrooms: Number(form.bathrooms) || 1,
+        size_sqm: form.size_sqm ? Number(form.size_sqm) : null,
+        max_occupants: form.max_occupants ? Number(form.max_occupants) : null,
+        minimum_stay_months: form.minimum_stay_months ? Number(form.minimum_stay_months) : null,
+        university_id: form.university_id || null,
+        photos,
+        draft,
+        resubmit: !draft,
+      };
+      const res = editingId
+        ? await api(`my/listings/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) })
+        : await api('my/listings', { method: 'POST', body: JSON.stringify(payload) });
+      if (res.error === 'quota_exceeded') { setToast(t('dash.err_quota')); setBusy(false); return; }
+      if (res.error === 'auth_required') { setToast(t('dash.err_auth')); setBusy(false); return; }
+      if (res.error) { setToast(t('dash.err_generic')); setBusy(false); return; }
+      setToast(draft ? t('dash.draft_saved') : t('dash.submitted'));
+      resetForm();
+      load();
+      setTimeout(() => setToast(''), 3500);
+    } catch (e) {
+      setToast(t('dash.err_generic'));
+    }
+    setBusy(false);
   };
 
   if (!auth?.signedIn) {
     return (
       <div className="container py-16 text-center text-slate-500">
-        İlan paneli için giriş yapın.
+        {t('dash.signin_required')}
       </div>
     );
   }
 
   const tabs = [['listings', t('dash.my_listings')], ['analytics', t('dash.analytics')], ['inquiries', t('dash.inquiries')], ['billing', t('dash.billing')]];
   const selCls = 'w-full h-11 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/30';
+  const labelCls = 'text-xs font-semibold text-slate-500 mb-1 block';
+  const unis = config?.all_universities || config?.universities || [];
+  const cities = config?.cities?.length ? config.cities : ['Girne', 'Lefkoşa', 'Gazimağusa', 'Güzelyurt'];
 
   return (
     <div className="container py-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold text-[#0a3d54]">{t('dash.title')}</h1>
         {data?.quota && (
-          <div className="text-sm text-slate-500">{t('dash.quota')}: <span className="font-bold text-[#0a4d68]">{data.quota.used}/{data.quota.total}</span> ({data.quota.package})</div>
+          <div className="text-sm text-slate-500">{t('dash.quota')}: <span className="font-bold text-[#0a4d68]">{data.quota.used}/{data.quota.total || '—'}</span> {data.quota.package ? `(${data.quota.package})` : ''}</div>
         )}
       </div>
-      {toast && <div className="mb-4 rounded-xl bg-[#dcfce7] text-[#15803d] px-4 py-3 text-sm font-medium">{toast}</div>}
+      {toast && (
+        <div className={`mb-4 rounded-xl px-4 py-3 text-sm font-medium ${
+          /başarısız|gerekli|doldu|olmalı|girin|ekleyin|failed|required|exceeded|must|Enter|Add|Select|Could|Quota|Sign/i.test(toast)
+            ? 'bg-amber-50 text-amber-800'
+            : 'bg-[#dcfce7] text-[#15803d]'
+        }`}>{toast}</div>
+      )}
 
       <div className="flex gap-2 border-b border-slate-200 mb-6 overflow-x-auto">
         {tabs.map(([k, label]) => (
@@ -85,39 +291,243 @@ export function DashboardView({ t, locale, config, auth }) {
 
       {tab === 'listings' && (
         <div>
-          <button onClick={() => setCreating(true)} className="mb-4 inline-flex items-center gap-2 h-11 rounded-xl bg-[#0a4d68] px-4 text-white font-semibold"><Plus className="h-5 w-5" /> {t('dash.new_listing')}</button>
+          {!creating && (
+            <button onClick={() => { setEditingId(null); setForm({ ...EMPTY_FORM }); setExistingPhotoKeys([]); setCreating(true); }} className="mb-4 inline-flex items-center gap-2 h-11 rounded-xl bg-[#0a4d68] px-4 text-white font-semibold"><Plus className="h-5 w-5" /> {t('dash.new_listing')}</button>
+          )}
           {creating && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 mb-5">
-              <h3 className="font-bold text-[#0a3d54] mb-3">{t('dash.create_title')}</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <input className={selCls} placeholder="Başlık" value={form.title} onChange={e => setForm(s => ({ ...s, title: e.target.value }))} />
-                <select className={selCls} value={form.property_type} onChange={e => setForm(s => ({ ...s, property_type: e.target.value }))}>
-                  {['apartment', 'studio', 'room', 'house'].map(p => <option key={p} value={p}>{t(`ptype.${p}`)}</option>)}
-                </select>
-                <input className={selCls} type="number" placeholder="Fiyat" value={form.price_amount} onChange={e => setForm(s => ({ ...s, price_amount: e.target.value }))} />
-                <select className={selCls} value={form.price_currency} onChange={e => setForm(s => ({ ...s, price_currency: e.target.value }))}>
-                  {['GBP', 'TRY', 'USD', 'EUR'].map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 mb-5">
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <h3 className="font-bold text-[#0a3d54] text-lg">{editingId ? t('dash.edit_title') : t('dash.create_title')}</h3>
+                <button type="button" onClick={resetForm} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
               </div>
-              <div className="flex gap-2 mt-4">
-                <button onClick={() => submit(false)} className="h-11 rounded-xl bg-[#0a4d68] px-4 text-white font-semibold">{t('dash.submit_review')}</button>
-                <button onClick={() => submit(true)} className="h-11 rounded-xl border border-slate-200 px-4 text-slate-600 font-semibold">{t('dash.save_draft')}</button>
+
+              <div className="space-y-5">
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 mb-3">{t('dash.section_basic')}</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className={labelCls}>{t('dash.field_title')} *</label>
+                      <input className={selCls} value={form.title} onChange={(e) => setField('title', e.target.value)} placeholder={t('dash.ph_title')} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className={labelCls}>{t('dash.field_description')} *</label>
+                      <textarea
+                        className="w-full min-h-[110px] rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/30"
+                        value={form.description}
+                        onChange={(e) => setField('description', e.target.value)}
+                        placeholder={t('dash.ph_description')}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_type')}</label>
+                      <select className={selCls} value={form.property_type} onChange={(e) => setField('property_type', e.target.value)}>
+                        {['apartment', 'studio', 'room', 'house'].map((p) => <option key={p} value={p}>{t(`ptype.${p}`)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_university')}</label>
+                      <select className={selCls} value={form.university_id} onChange={(e) => setField('university_id', e.target.value)}>
+                        <option value="">{t('search.any_university')}</option>
+                        {unis.map((u) => <option key={u.id} value={u.id}>{u.name_tr || u.name_en || u.slug}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_bedrooms')}</label>
+                      <input className={selCls} type="number" min="0" value={form.bedrooms} onChange={(e) => setField('bedrooms', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_bathrooms')}</label>
+                      <input className={selCls} type="number" min="1" value={form.bathrooms} onChange={(e) => setField('bathrooms', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_size')}</label>
+                      <input className={selCls} type="number" min="1" value={form.size_sqm} onChange={(e) => setField('size_sqm', e.target.value)} placeholder="m²" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_occupants')}</label>
+                      <input className={selCls} type="number" min="1" value={form.max_occupants} onChange={(e) => setField('max_occupants', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_gender')}</label>
+                      <select className={selCls} value={form.gender_preference} onChange={(e) => setField('gender_preference', e.target.value)}>
+                        {['any', 'male', 'female'].map((g) => <option key={g} value={g}>{t(`gender.${g}`)}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex items-end gap-4 pb-1 flex-wrap">
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" checked={form.furnished} onChange={(e) => setField('furnished', e.target.checked)} />
+                        {t('search.furnished')}
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" checked={form.bills_included} onChange={(e) => setField('bills_included', e.target.checked)} />
+                        {t('search.bills_included')}
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 mb-3">{t('dash.section_price')}</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>{t('dash.field_price')} *</label>
+                      <input className={selCls} type="number" min="1" value={form.price_amount} onChange={(e) => setField('price_amount', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_currency')}</label>
+                      <select className={selCls} value={form.price_currency} onChange={(e) => setField('price_currency', e.target.value)}>
+                        {['GBP', 'TRY', 'USD', 'EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_deposit')}</label>
+                      <input className={selCls} type="number" min="0" value={form.deposit_amount} onChange={(e) => setField('deposit_amount', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_deposit_currency')}</label>
+                      <select className={selCls} value={form.deposit_currency} onChange={(e) => setField('deposit_currency', e.target.value)}>
+                        {['GBP', 'TRY', 'USD', 'EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_available')}</label>
+                      <input className={selCls} type="date" value={form.available_from} onChange={(e) => setField('available_from', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_min_stay')}</label>
+                      <input className={selCls} type="number" min="1" value={form.minimum_stay_months} onChange={(e) => setField('minimum_stay_months', e.target.value)} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className={labelCls}>{t('dash.field_bills_note')}</label>
+                      <input className={selCls} value={form.bills_note} onChange={(e) => setField('bills_note', e.target.value)} placeholder={t('dash.ph_bills_note')} />
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 mb-3">{t('dash.section_location')}</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>{t('dash.field_city')} *</label>
+                      <select className={selCls} value={form.city} onChange={(e) => setField('city', e.target.value)}>
+                        {cities.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_neighbourhood')} *</label>
+                      <input className={selCls} value={form.neighbourhood} onChange={(e) => setField('neighbourhood', e.target.value)} placeholder={t('dash.ph_neighbourhood')} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className={labelCls}>{t('dash.field_address')} *</label>
+                      <input className={selCls} value={form.address_private} onChange={(e) => setField('address_private', e.target.value)} placeholder={t('dash.ph_address')} />
+                      <p className="text-[11px] text-slate-400 mt-1">{t('dash.address_note')}</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 mb-3">{t('dash.section_contact')}</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>{t('dash.field_display_name')}</label>
+                      <input className={selCls} value={form.display_name} onChange={(e) => setField('display_name', e.target.value)} placeholder={t('dash.ph_display_name')} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('dash.field_phone')} *</label>
+                      <input className={selCls} dir="ltr" value={form.phone_e164} onChange={(e) => setField('phone_e164', e.target.value)} placeholder="+90 533 ..." />
+                      <p className="text-[11px] text-slate-400 mt-1">{t('dash.phone_note')}</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 mb-3">{t('dash.section_amenities')}</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {AMENITY_KEYS.map((key) => {
+                      const on = form.amenities.includes(key);
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => toggleAmenity(key)}
+                          className={`h-9 px-3 rounded-lg text-xs font-semibold border ${on ? 'bg-[#0a4d68] text-white border-[#0a4d68]' : 'bg-white text-slate-600 border-slate-200'}`}
+                        >
+                          {t(`amenity.${key}`)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 mb-3">{t('dash.section_photos')} *</h4>
+                  <label className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-8 cursor-pointer hover:border-[#0a4d68]/40">
+                    <ImagePlus className="h-8 w-8 text-[#0a4d68]" />
+                    <span className="text-sm font-semibold text-slate-700">{t('dash.add_photos')}</span>
+                    <span className="text-xs text-slate-400 text-center">{t('dash.photos_hint')}</span>
+                    {existingPhotoKeys.length > 0 && (
+                      <span className="text-xs text-[#0a4d68] font-medium">{t('dash.existing_photos', { n: existingPhotoKeys.length })}</span>
+                    )}
+                    <input type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" onChange={onPickPhotos} />
+                  </label>
+                  {photoPreviews.length > 0 && (
+                    <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                      {photoPreviews.map((src, i) => (
+                        <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-slate-200">
+                          <img src={src} alt="" className="h-full w-full object-cover" />
+                          <button type="button" onClick={() => removePhoto(i)} className="absolute top-1 end-1 h-7 w-7 rounded-full bg-black/60 text-white flex items-center justify-center">
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                  <button disabled={busy} onClick={() => submit(false)} className="h-11 rounded-xl bg-[#0a4d68] px-4 text-white font-semibold disabled:opacity-60">
+                    {busy ? t('common.loading') : t('dash.submit_review')}
+                  </button>
+                  <button disabled={busy} onClick={() => submit(true)} className="h-11 rounded-xl border border-slate-200 px-4 text-slate-600 font-semibold disabled:opacity-60">
+                    {t('dash.save_draft')}
+                  </button>
+                </div>
               </div>
             </div>
           )}
           <div className="space-y-3">
-            {(data?.items || []).map(l => (
-              <div key={l.id} className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-3">
-                <img src={l.photo} alt="" className="h-16 w-24 rounded-lg object-cover shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-slate-800 truncate">{l.title}</div>
-                  <div className="text-xs text-slate-500">{t('dash.ref')}: {l.reference_code} · {l.city} · {money(l.price, locale)}</div>
+            {(data?.items || []).map((l) => (
+              <div key={l.id} className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <img src={l.photo || '/logo.svg'} alt="" className="h-16 w-24 rounded-lg object-cover shrink-0 bg-slate-100" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-slate-800 truncate">{l.title}</div>
+                    <div className="text-xs text-slate-500">{t('dash.ref')}: {l.reference_code} · {l.city} · {money(l.price, locale)}</div>
+                    {l.status === 'rejected' && l.rejection_reason && (
+                      <div className="text-xs text-red-600 mt-1">{t('dash.rejection')}: {l.rejection_reason}</div>
+                    )}
+                    <div className="flex sm:hidden items-center gap-3 text-xs text-slate-500 mt-1">
+                      <span className="flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {l.view_count ?? 0}</span>
+                      <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {l.contact_reveal_count ?? 0}</span>
+                      <StatusPill s={l.status} t={t} />
+                    </div>
+                  </div>
                 </div>
                 <div className="hidden sm:flex items-center gap-4 text-xs text-slate-500">
                   <span className="flex items-center gap-1"><Eye className="h-4 w-4" /> {l.view_count ?? 0}</span>
                   <span className="flex items-center gap-1"><Phone className="h-4 w-4" /> {l.contact_reveal_count ?? 0}</span>
                 </div>
-                <StatusPill s={l.status} t={t} />
+                <div className="hidden sm:block"><StatusPill s={l.status} t={t} /></div>
+                <div className="flex gap-2 shrink-0">
+                  <button type="button" onClick={() => startEdit(l.id)} className="h-9 px-3 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700 inline-flex items-center gap-1">
+                    <Pencil className="h-3.5 w-3.5" /> {t('dash.edit')}
+                  </button>
+                  {['draft', 'rejected', 'pending_review'].includes(l.status) && (
+                    <button type="button" onClick={() => removeListing(l.id)} className="h-9 px-3 rounded-lg border border-red-100 text-sm font-semibold text-red-600 inline-flex items-center gap-1">
+                      <Trash2 className="h-3.5 w-3.5" /> {t('dash.delete')}
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
             {(!data?.items || data.items.length === 0) && <p className="text-slate-400 text-center py-10">{t('dash.empty')}</p>}
@@ -130,7 +540,7 @@ export function DashboardView({ t, locale, config, auth }) {
           <h3 className="font-bold text-[#0a3d54] mb-4">{t('dash.analytics')} · {t('dash.views')} / {t('dash.reveals')}</h3>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={analytics.trend}>
+              <BarChart data={analytics.trend || []}>
                 <XAxis dataKey="week" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
                 <Tooltip />
@@ -144,7 +554,7 @@ export function DashboardView({ t, locale, config, auth }) {
 
       {tab === 'inquiries' && (
         <div className="space-y-3">
-          {inquiries.map(i => (
+          {inquiries.map((i) => (
             <div key={i.id} className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="flex items-center justify-between">
                 <div className="font-semibold text-slate-800">{i.from} <span className="text-xs text-slate-400">· {i.ref}</span></div>
@@ -153,6 +563,7 @@ export function DashboardView({ t, locale, config, auth }) {
               <p className="text-sm text-slate-600 mt-1">{i.message}</p>
             </div>
           ))}
+          {inquiries.length === 0 && <p className="text-slate-400 text-center py-10">{t('dash.empty')}</p>}
         </div>
       )}
 
@@ -160,16 +571,20 @@ export function DashboardView({ t, locale, config, auth }) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <h3 className="font-bold text-[#0a3d54] mb-3">{t('dash.billing')}</h3>
-            <div className="rounded-xl bg-[#e8f2f6] p-4 mb-3">
-              <div className="text-sm text-slate-500">{billing.subscription.package} · {billing.subscription.status}</div>
-              <div className="text-lg font-bold text-[#0a4d68]">{billing.subscription.listings_used}/{billing.subscription.listings_total} {t('dash.used')}</div>
-            </div>
+            {billing.subscription ? (
+              <div className="rounded-xl bg-[#e8f2f6] p-4 mb-3">
+                <div className="text-sm text-slate-500">{billing.subscription.package} · {billing.subscription.status}</div>
+                <div className="text-lg font-bold text-[#0a4d68]">{billing.subscription.listings_used}/{billing.subscription.listings_total} {t('dash.used')}</div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500 mb-3">{t('dash.no_subscription')}</p>
+            )}
             <div className="rounded-xl border border-slate-200 p-4">
               <div className="font-semibold text-slate-700 flex items-center gap-2 mb-2"><Banknote className="h-4 w-4" /> {t('dash.bank_transfer')}</div>
               <div className="text-sm text-slate-600 space-y-1">
-                <div>{billing.bank_instructions.bank}</div>
-                <div dir="ltr" className="font-mono text-xs">{billing.bank_instructions.iban}</div>
-                <div>Ref: <span className="font-bold text-[#0a4d68]">{billing.bank_instructions.reference}</span></div>
+                <div>{billing.bank_instructions?.bank}</div>
+                <div dir="ltr" className="font-mono text-xs">{billing.bank_instructions?.iban}</div>
+                <div>Ref: <span className="font-bold text-[#0a4d68]">{billing.bank_instructions?.reference}</span></div>
               </div>
               <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-3">{t('dash.bank_note')}</p>
             </div>
@@ -177,12 +592,13 @@ export function DashboardView({ t, locale, config, auth }) {
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <h3 className="font-bold text-[#0a3d54] mb-3">{t('admin.invoices')}</h3>
             <div className="space-y-2">
-              {billing.invoices.map(inv => (
+              {(billing.invoices || []).map((inv) => (
                 <div key={inv.id} className="flex items-center justify-between rounded-xl border border-slate-100 p-3 text-sm">
-                  <span>{inv.package} · {money({ amount: inv.amount, currency: inv.currency }, locale)}</span>
+                  <span>{inv.package || inv.bank_reference} · {money({ amount: inv.amount, currency: inv.currency }, locale)}</span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${inv.status === 'paid' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-amber-50 text-amber-700'}`}>{inv.status}</span>
                 </div>
               ))}
+              {(!billing.invoices || billing.invoices.length === 0) && <p className="text-slate-400 text-sm">{t('admin.no_items')}</p>}
             </div>
           </div>
         </div>
@@ -248,9 +664,12 @@ export function AdminView({ t, locale, auth }) {
                     </div>
                   )}
                 </div>
-                <div className="flex gap-2">
-                  <button onClick={() => act('admin/review', { id: l.id, action: 'approve' }, 'queue')} className="inline-flex items-center gap-1 h-9 rounded-lg bg-[#15803d] px-3 text-white text-sm font-semibold"><CheckCircle2 className="h-4 w-4" /> {t('admin.approve')}</button>
-                  <button onClick={() => act('admin/review', { id: l.id, action: 'reject', reason: 'Uygun değil' }, 'queue')} className="inline-flex items-center gap-1 h-9 rounded-lg bg-red-500 px-3 text-white text-sm font-semibold"><XCircle className="h-4 w-4" /> {t('admin.reject')}</button>
+                <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                  <button onClick={() => act('admin/review', { id: l.id, action: 'approve' }, 'queue')} className="inline-flex items-center justify-center gap-1 h-9 rounded-lg bg-[#15803d] px-3 text-white text-sm font-semibold"><CheckCircle2 className="h-4 w-4" /> {t('admin.approve')}</button>
+                  <button onClick={() => {
+                    const reason = window.prompt(t('admin.reason'), t('admin.reject_default')) || t('admin.reject_default');
+                    act('admin/review', { id: l.id, action: 'reject', reason }, 'queue');
+                  }} className="inline-flex items-center justify-center gap-1 h-9 rounded-lg bg-red-500 px-3 text-white text-sm font-semibold"><XCircle className="h-4 w-4" /> {t('admin.reject')}</button>
                 </div>
               </div>
             </div>
@@ -269,7 +688,7 @@ export function AdminView({ t, locale, auth }) {
               </div>
               <div className="flex items-center gap-2">
                 <span className={`text-xs rounded-full px-2 py-0.5 font-semibold ${r.status === 'open' ? 'bg-amber-50 text-amber-700' : 'bg-[#dcfce7] text-[#15803d]'}`}>{r.status}</span>
-                {r.status === 'open' && <button onClick={() => act('admin/reports/resolve', { id: r.id, action: 'unpublish' }, 'reports')} className="h-9 rounded-lg bg-[#0a4d68] px-3 text-white text-sm font-semibold">{t('admin.unpublish')}</button>}
+                {r.status === 'open' && <button onClick={() => act('admin/reports/resolve', { id: r.id, listing_id: r.listing_id, action: 'unpublish' }, 'reports')} className="h-9 rounded-lg bg-[#0a4d68] px-3 text-white text-sm font-semibold">{t('admin.unpublish')}</button>}
               </div>
             </div>
           ))}

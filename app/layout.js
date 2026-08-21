@@ -1,8 +1,8 @@
 import './globals.css'
-import { Inter } from 'next/font/google'
+import { Plus_Jakarta_Sans } from 'next/font/google'
 import { Providers } from './providers'
 
-const inter = Inter({ subsets: ['latin', 'latin-ext'], display: 'swap', variable: '--font-inter' })
+const sans = Plus_Jakarta_Sans({ subsets: ['latin', 'latin-ext'], display: 'swap', variable: '--font-sans' })
 
 export const metadata = {
   title: 'Kıbrıs Öğrenci — KKTC Öğrenci Konaklaması',
@@ -13,11 +13,11 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="tr" className={inter.variable}>
+    <html lang="tr" className={sans.variable}>
       <head>
         <script dangerouslySetInnerHTML={{__html:'window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);'}} />
       </head>
-      <body style={{ fontFamily: 'var(--font-inter), system-ui, sans-serif' }}>
+      <body style={{ fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
         <Providers>{children}</Providers>
       </body>
     </html>

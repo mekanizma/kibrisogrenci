@@ -354,13 +354,41 @@ async function handleLive(request, route, path, method, sp, user) {
     if (denied) return json(denied, denied.status);
     return json(await db.dbMyListings(user));
   }
+  if (path[0] === 'my' && path[1] === 'listings' && path[2] && method === 'GET') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const result = await db.dbGetMyListing(user, path[2]);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
   if (route === 'my/listings' && method === 'POST') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);
     const body = await request.json().catch(() => ({}));
     const result = await db.dbCreateListing(user, body);
+    if (result.error) return json({ error: result.error, detail: result.detail || null }, result.status);
+    return json(result);
+  }
+  if (path[0] === 'my' && path[1] === 'listings' && path[2] && method === 'PATCH') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const body = await request.json().catch(() => ({}));
+    const result = await db.dbUpdateListing(user, path[2], body);
+    if (result.error) return json({ error: result.error, detail: result.detail || null }, result.status);
+    return json(result);
+  }
+  if (path[0] === 'my' && path[1] === 'listings' && path[2] && method === 'DELETE') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const result = await db.dbDeleteListing(user, path[2]);
     if (result.error) return json({ error: result.error }, result.status);
     return json(result);
+  }
+  if (route === 'my/become-landlord' && method === 'POST') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const body = await request.json().catch(() => ({}));
+    return json(await db.dbBecomeLandlord(user, body));
   }
   if (route === 'my/saved' && method === 'GET') {
     const denied = requireUser(user);
@@ -377,25 +405,17 @@ async function handleLive(request, route, path, method, sp, user) {
   if (route === 'my/analytics' && method === 'GET') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);
-    return json({ trend: [] });
+    return json(await db.dbMyAnalytics(user));
   }
   if (route === 'my/inquiries' && method === 'GET') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);
-    return json({ items: [] });
+    return json(await db.dbMyInquiries(user));
   }
   if (route === 'my/billing' && method === 'GET') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);
-    return json({
-      subscription: null,
-      invoices: [],
-      bank_instructions: {
-        bank: process.env.BANK_NAME || 'Kıbrıs Vakıflar Bankası',
-        iban: process.env.BANK_IBAN || '',
-        reference: `KO-${user.id.slice(0, 8).toUpperCase()}`,
-      },
-    });
+    return json(await db.dbMyBilling(user));
   }
 
   if (route.startsWith('admin/')) {
@@ -410,11 +430,7 @@ async function handleLive(request, route, path, method, sp, user) {
     if (result.error) return json({ error: result.error }, result.status);
     return json(result);
   }
-  if (route === 'admin/reports' && method === 'GET') {
-    const { supabaseAdmin } = await import('@/lib/supabase/admin');
-    const { data } = await supabaseAdmin().from('reports').select('*').order('created_at', { ascending: false }).limit(100);
-    return json({ items: data || [] });
-  }
+  if (route === 'admin/reports' && method === 'GET') return json(await db.dbAdminReports());
   if (route === 'admin/reports/resolve' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     const { supabaseAdmin } = await import('@/lib/supabase/admin');
@@ -438,34 +454,51 @@ async function handleLive(request, route, path, method, sp, user) {
   }
   if (route === 'admin/invoices' && method === 'GET') {
     const { supabaseAdmin } = await import('@/lib/supabase/admin');
-    const { data } = await supabaseAdmin().from('invoices').select('*').order('issued_at', { ascending: false }).limit(100);
-    return json({ items: data || [] });
+    const { data } = await supabaseAdmin().from('invoices').select('id, user_id, amount, currency, status, bank_reference, issued_at, profiles(full_name)').order('issued_at', { ascending: false }).limit(100);
+    return json({
+      items: (data || []).map((inv) => ({
+        id: inv.id,
+        user: inv.profiles?.full_name || inv.user_id?.slice(0, 8),
+        package: inv.bank_reference || 'Paket',
+        amount: Number(inv.amount),
+        currency: inv.currency,
+        status: inv.status,
+        bank_reference: inv.bank_reference,
+      })),
+    });
   }
   if (route === 'admin/invoices/pay' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     const { supabaseAdmin } = await import('@/lib/supabase/admin');
     const admin = supabaseAdmin();
+    const { data: inv } = await admin.from('invoices').select('*').eq('id', body.id).maybeSingle();
+    if (!inv) return json({ error: 'not_found' }, 404);
     await admin.from('invoices').update({
       status: 'paid',
       marked_paid_at: new Date().toISOString(),
       marked_paid_by: user.id,
-      bank_reference: body.bank_reference || null,
+      bank_reference: body.bank_reference || inv.bank_reference,
     }).eq('id', body.id);
+    const { data: pkg } = await admin.from('packages').select('*').eq('is_active', true).order('listing_quota', { ascending: false }).limit(1).maybeSingle();
+    if (pkg) {
+      const ends = new Date(Date.now() + (pkg.duration_days || 30) * 86400000).toISOString();
+      const { data: existingSub } = await admin.from('subscriptions').select('id').eq('user_id', inv.user_id).eq('status', 'active').maybeSingle();
+      if (existingSub) {
+        await admin.from('subscriptions').update({ ends_at: ends, package_id: pkg.id }).eq('id', existingSub.id);
+      } else {
+        const { data: newSub } = await admin.from('subscriptions').insert({
+          user_id: inv.user_id, package_id: pkg.id, starts_at: new Date().toISOString(), ends_at: ends, status: 'active',
+        }).select('id').single();
+        if (newSub) await admin.from('invoices').update({ subscription_id: newSub.id }).eq('id', inv.id);
+      }
+    }
     await admin.from('audit_log').insert({
       actor_user_id: user.id, action: 'invoice.mark_paid', entity_type: 'invoice', entity_id: body.id,
-      after_snapshot: { status: 'paid' },
+      after_snapshot: { status: 'paid', subscription_activated: true },
     });
     return json({ ok: true, subscription_activated: true });
   }
-  if (route === 'admin/coords' && method === 'GET') {
-    const { supabaseAdmin } = await import('@/lib/supabase/admin');
-    const { data } = await supabaseAdmin().from('universities').select('id, name_tr, city, coordinates_verified, campus_location');
-    return json({
-      items: (data || []).map((u) => ({
-        id: u.id, name: u.name_tr, city: u.city, coordinates_verified: u.coordinates_verified,
-      })),
-    });
-  }
+  if (route === 'admin/coords' && method === 'GET') return json(await db.dbAdminCoords());
   if (route === 'admin/coords/verify' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     const { supabaseAdmin } = await import('@/lib/supabase/admin');
@@ -562,3 +595,5 @@ async function handle(request, ctx) {
 
 export const GET = handle;
 export const POST = handle;
+export const PATCH = handle;
+export const DELETE = handle;
