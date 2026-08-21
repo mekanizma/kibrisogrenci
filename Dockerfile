@@ -3,8 +3,9 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache libc6-compat
 COPY package.json package-lock.json* yarn.lock* ./
+# Coolify often sets NODE_ENV=production; still need CSS toolchain for next build.
 RUN if [ -f yarn.lock ]; then yarn install --frozen-lockfile; \
-    elif [ -f package-lock.json ]; then npm ci; \
+    elif [ -f package-lock.json ]; then npm ci --include=dev; \
     else npm install; fi
 
 # ---- Build: Next.js ----
@@ -13,7 +14,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-# Public env needed at build for inlined NEXT_PUBLIC_* 
+ENV NODE_ENV=production
+# Public env needed at build for inlined NEXT_PUBLIC_*
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 ARG NEXT_PUBLIC_SITE_URL
