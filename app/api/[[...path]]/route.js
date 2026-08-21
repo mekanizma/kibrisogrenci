@@ -33,6 +33,14 @@ const invoices = [
 ];
 /** Mock admin review outcomes for seed + created listings: id -> { status, rejection_reason } */
 const listingModeration = new Map();
+/** Mock in-app chat: { id, listing_id, ref, student_id, landlord_user_id, ... messages } */
+const mockConversations = [];
+const mockMessages = [];
+
+function mockClip(s, n = 120) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  return t.length <= n ? t : `${t.slice(0, n - 1)}…`;
+}
 
 function mockAdminListingDetail(id) {
   const created = userListings.find((u) => u.id === id);
@@ -177,6 +185,7 @@ function filterListings(sp) {
   if (g('gender')) items = items.filter((l) => l.gender_preference === 'any' || l.gender_preference === g('gender'));
   if (g('verified_only') === 'true') items = items.filter((l) => l.landlord.verified);
   if (g('max_walk')) items = items.filter((l) => walkMinutes(l.distance_m) <= Number(g('max_walk')));
+  if (g('max_distance_m')) items = items.filter((l) => l.distance_m != null && l.distance_m <= Number(g('max_distance_m')));
   const amen = (g('amenities') || '').split(',').filter(Boolean);
   if (amen.length) items = items.filter((l) => amen.every((a) => l.amenities.includes(a)));
   if (g('price_min')) items = items.filter((l) => l.price_gbp >= Number(g('price_min')));
@@ -186,6 +195,36 @@ function filterListings(sp) {
   if (sort === 'price_asc') items.sort((a, b) => a.price_gbp - b.price_gbp);
   else if (sort === 'price_desc') items.sort((a, b) => b.price_gbp - a.price_gbp);
   else if (sort === 'distance') items.sort((a, b) => a.distance_m - b.distance_m);
+  else if (sort === 'near') {
+    const nearLat = Number(g('near_lat') || NaN);
+    const nearLng = Number(g('near_lng') || NaN);
+    if (Number.isFinite(nearLat) && Number.isFinite(nearLng)) {
+      const CITY = {
+        Girne: { lat: 35.341, lng: 33.317 },
+        Lefkoşa: { lat: 35.185, lng: 33.382 },
+        Gazimağusa: { lat: 35.125, lng: 33.94 },
+        Güzelyurt: { lat: 35.199, lng: 32.993 },
+        Lefke: { lat: 35.112, lng: 32.85 },
+        İskele: { lat: 35.287, lng: 33.892 },
+      };
+      const toRad = (d) => (d * Math.PI) / 180;
+      const dist = (lat, lng) => {
+        const R = 6371000;
+        const dLat = toRad(lat - nearLat);
+        const dLng = toRad(lng - nearLng);
+        const a = Math.sin(dLat / 2) ** 2
+          + Math.cos(toRad(nearLat)) * Math.cos(toRad(lat)) * Math.sin(dLng / 2) ** 2;
+        return 2 * R * Math.asin(Math.sqrt(a));
+      };
+      items.sort((a, b) => {
+        const ca = CITY[a.city];
+        const cb = CITY[b.city];
+        const da = ca ? dist(ca.lat, ca.lng) : Number.POSITIVE_INFINITY;
+        const db = cb ? dist(cb.lat, cb.lng) : Number.POSITIVE_INFINITY;
+        return da - db;
+      });
+    }
+  }
   else items.sort((a, b) => new Date(b.published_at) - new Date(a.published_at));
   return items;
 }
@@ -208,13 +247,16 @@ function clientIp(request) {
 
 async function handleMock(request, route, path, method, sp) {
   if (route === 'config' && method === 'GET') {
-    const publicUnis = UNIVERSITIES.filter((u) => u.coordinates_verified);
+    const mapped = UNIVERSITIES.map((u) => ({
+      ...u,
+      listings_count: LISTINGS.filter((l) => l.uni === u.id).length,
+    }));
     return json({
       fx_to_gbp: FX_TO_GBP, currencies: CURRENCIES, hero_image: HERO_IMAGE,
-      universities: publicUnis.map((u) => ({ ...u, listings_count: LISTINGS.filter((l) => l.uni === u.id).length })),
-      all_universities: UNIVERSITIES, packages: PACKAGES,
+      universities: mapped,
+      all_universities: mapped, packages: PACKAGES,
       stats: {
-        listings: LISTINGS.length, universities: publicUnis.length,
+        listings: LISTINGS.length, universities: mapped.length,
         verified_landlords: [...new Set(LISTINGS.filter((l) => l.landlord.verified).map((l) => l.landlord.name))].length,
         cities: [...new Set(LISTINGS.map((l) => l.city))].length,
       },
@@ -442,11 +484,135 @@ async function handleMock(request, route, path, method, sp) {
     });
   }
 
+  // ---- mock messaging ----
+  if (route === 'messages' && method === 'GET' && !path[1]) {
+    const user = await getRequestUser(request);
+    const denied = requireUser(user);
+    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+    const uid = user?.id || 'demo-student';
+    const items = mockConversations
+      .filter((c) => c.student_id === uid || c.landlord_user_id === uid)
+      .sort((a, b) => new Date(b.last_message_at) - new Date(a.last_message_at))
+      .map((c) => {
+        const isStudent = c.student_id === uid;
+        const myRead = isStudent ? c.student_last_read_at : c.landlord_last_read_at;
+        const last = mockMessages.filter((m) => m.conversation_id === c.id).slice(-1)[0];
+        const unread = last && last.sender_id !== uid && (!myRead || new Date(c.last_message_at) > new Date(myRead));
+        return {
+          id: c.id,
+          reference_code: c.ref,
+          listing_title: c.title,
+          other_name: isStudent ? c.landlord_name : c.student_name,
+          last_message_at: c.last_message_at,
+          last_message_preview: c.last_message_preview,
+          unread: Boolean(unread),
+          role: isStudent ? 'student' : 'landlord',
+        };
+      });
+    return json({ items });
+  }
+  if (route === 'messages' && method === 'POST' && !path[1]) {
+    const user = await getRequestUser(request);
+    const denied = requireUser(user);
+    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+    const uid = user?.id || 'demo-student';
+    const body = await request.json().catch(() => ({}));
+    const text = String(body.body || '').trim();
+    if (!body.ref || !text) return json({ error: 'invalid' }, 400);
+    const l = getListingByRef(body.ref);
+    if (!l) return json({ error: 'not_found' }, 404);
+    let conv = mockConversations.find((c) => c.ref === body.ref && c.student_id === uid);
+    const now = new Date().toISOString();
+    if (!conv) {
+      conv = {
+        id: `conv-${Date.now()}`,
+        listing_id: l.id,
+        ref: l.reference_code,
+        title: l.title_tr,
+        student_id: uid,
+        landlord_user_id: `ll-${l.landlord.name}`,
+        landlord_name: l.landlord.name,
+        student_name: 'Öğrenci',
+        last_message_at: now,
+        last_message_preview: mockClip(text),
+        student_last_read_at: now,
+        landlord_last_read_at: null,
+      };
+      mockConversations.unshift(conv);
+    }
+    const msg = { id: `msg-${Date.now()}`, conversation_id: conv.id, sender_id: uid, body: text, created_at: now };
+    mockMessages.push(msg);
+    conv.last_message_at = now;
+    conv.last_message_preview = mockClip(text);
+    conv.student_last_read_at = now;
+    return json({ ok: true, conversation_id: conv.id, message: msg });
+  }
+  if (path[0] === 'messages' && path[1] === 'unread' && method === 'GET') {
+    const user = await getRequestUser(request);
+    const denied = requireUser(user);
+    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json({ count: 0 });
+    const uid = user?.id || 'demo-student';
+    let count = 0;
+    for (const c of mockConversations) {
+      if (c.student_id !== uid && c.landlord_user_id !== uid) continue;
+      const isStudent = c.student_id === uid;
+      const myRead = isStudent ? c.student_last_read_at : c.landlord_last_read_at;
+      const last = mockMessages.filter((m) => m.conversation_id === c.id).slice(-1)[0];
+      if (last && last.sender_id !== uid && (!myRead || new Date(c.last_message_at) > new Date(myRead))) count += 1;
+    }
+    return json({ count });
+  }
+  if (path[0] === 'messages' && path[1] && path[1] !== 'unread' && method === 'GET') {
+    const user = await getRequestUser(request);
+    const denied = requireUser(user);
+    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+    const uid = user?.id || 'demo-student';
+    const conv = mockConversations.find((c) => c.id === path[1]);
+    if (!conv) return json({ error: 'not_found' }, 404);
+    if (conv.student_id !== uid && conv.landlord_user_id !== uid) return json({ error: 'forbidden' }, 403);
+    const now = new Date().toISOString();
+    if (conv.student_id === uid) conv.student_last_read_at = now;
+    else conv.landlord_last_read_at = now;
+    const isStudent = conv.student_id === uid;
+    return json({
+      conversation: {
+        id: conv.id,
+        reference_code: conv.ref,
+        listing_title: conv.title,
+        other_name: isStudent ? conv.landlord_name : conv.student_name,
+        role: isStudent ? 'student' : 'landlord',
+      },
+      messages: mockMessages
+        .filter((m) => m.conversation_id === conv.id)
+        .map((m) => ({ id: m.id, body: m.body, created_at: m.created_at, mine: m.sender_id === uid, sender_id: m.sender_id })),
+    });
+  }
+  if (path[0] === 'messages' && path[1] && path[1] !== 'unread' && method === 'POST') {
+    const user = await getRequestUser(request);
+    const denied = requireUser(user);
+    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+    const uid = user?.id || 'demo-student';
+    const conv = mockConversations.find((c) => c.id === path[1]);
+    if (!conv) return json({ error: 'not_found' }, 404);
+    if (conv.student_id !== uid && conv.landlord_user_id !== uid) return json({ error: 'forbidden' }, 403);
+    const body = await request.json().catch(() => ({}));
+    const text = String(body.body || '').trim();
+    if (!text) return json({ error: 'invalid' }, 400);
+    const now = new Date().toISOString();
+    const msg = { id: `msg-${Date.now()}`, conversation_id: conv.id, sender_id: uid, body: text, created_at: now };
+    mockMessages.push(msg);
+    conv.last_message_at = now;
+    conv.last_message_preview = mockClip(text);
+    if (conv.student_id === uid) conv.student_last_read_at = now;
+    else conv.landlord_last_read_at = now;
+    return json({ ok: true, message: { id: msg.id, body: text, created_at: now, mine: true, sender_id: uid } });
+  }
+
   return null;
 }
 
 async function handleLive(request, route, path, method, sp, user) {
-  if (route === 'config' && method === 'GET') return json(await db.dbGetConfig(), 200, PUBLIC_CACHE);
+  if (route === 'config' && method === 'GET') return json(await db.dbGetConfig(), 200, 'public, max-age=15, s-maxage=30, stale-while-revalidate=60');
 
   if (route === 'listings' && method === 'GET') return json(await db.dbListListings(sp), 200, PUBLIC_CACHE);
 
@@ -571,10 +737,51 @@ async function handleLive(request, route, path, method, sp, user) {
     if (denied) return json(denied, denied.status);
     return json(await db.dbMyInquiries(user));
   }
+  if (route === 'my/reports' && method === 'GET') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    return json(await db.dbMyReports(user));
+  }
   if (route === 'my/billing' && method === 'GET') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);
     return json(await db.dbMyBilling(user));
+  }
+
+  if (route === 'messages' && method === 'GET' && !path[1]) {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const result = await db.dbListConversations(user);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
+  if (route === 'messages' && method === 'POST' && !path[1]) {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const body = await request.json().catch(() => ({}));
+    const result = await db.dbStartConversation(user, body);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
+  if (path[0] === 'messages' && path[1] === 'unread' && method === 'GET') {
+    const denied = requireUser(user);
+    if (denied) return json({ count: 0 });
+    return json(await db.dbUnreadMessageCount(user));
+  }
+  if (path[0] === 'messages' && path[1] && path[1] !== 'unread' && method === 'GET') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const result = await db.dbGetConversation(user, path[1]);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
+  if (path[0] === 'messages' && path[1] && path[1] !== 'unread' && method === 'POST') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const body = await request.json().catch(() => ({}));
+    const result = await db.dbSendMessage(user, path[1], body.body);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
   }
 
   if (route.startsWith('admin/')) {
@@ -597,22 +804,20 @@ async function handleLive(request, route, path, method, sp, user) {
   if (route === 'admin/reports' && method === 'GET') return json(await db.dbAdminReports());
   if (route === 'admin/reports/resolve' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    const { supabaseAdmin } = await import('@/lib/supabase/admin');
-    const admin = supabaseAdmin();
-    await admin.from('reports').update({ status: 'resolved', resolved_by: user.id }).eq('id', body.id);
-    if (body.action === 'unpublish' && body.listing_id) {
-      await admin.from('listings').update({ status: 'rejected' }).eq('id', body.listing_id);
-    }
-    await admin.from('audit_log').insert({
-      actor_user_id: user.id, action: 'report.resolve', entity_type: 'report', entity_id: body.id,
-      after_snapshot: { status: 'resolved', action: body.action || null },
-    });
-    return json({ ok: true });
+    const result = await db.dbAdminResolveReport(user, body);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
   }
   if (route === 'admin/users' && method === 'GET') return json(await db.dbAdminUsers());
   if (route === 'admin/users/status' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     const result = await db.dbAdminSetUserStatus(user, body);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
+  if (route === 'admin/landlords/verify' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const result = await db.dbAdminSetLandlordVerification(user, body);
     if (result.error) return json({ error: result.error }, result.status);
     return json(result);
   }

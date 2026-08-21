@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { useQuery } from '@tanstack/react-query';
@@ -15,6 +16,14 @@ import { tFor, LOCALES, LOCALE_LABEL, isRTL, listingLang, isMachineTranslated } 
 import { createClient } from '@/lib/supabase/client';
 import { api, refreshSessionIntoAuth, signOutEverywhere, setAccessToken } from '@/lib/api-client';
 import { MOCK_PHOTOS } from '@/lib/mock-featured';
+import {
+  distanceToListing,
+  formatDistance,
+  getGeoPref,
+  loadStoredGeo,
+  requestUserLocation,
+  setGeoPref,
+} from '@/lib/geo-client';
 
 const DashboardView = dynamic(
   () => import('@/components/panels').then((m) => m.DashboardView),
@@ -37,6 +46,10 @@ const ListingMap = dynamic(() => import('@/components/ListingMap'), {
   loading: () => <div className="h-56 animate-pulse rounded-xl bg-slate-100 border border-slate-200" />,
 });
 const ProfileView = dynamic(() => import('@/components/ProfileView'), {
+  ssr: false,
+  loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div>,
+});
+const MessagesView = dynamic(() => import('@/components/MessagesView'), {
   ssr: false,
   loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div>,
 });
@@ -143,7 +156,7 @@ function PriceDisplay({ price, currency, fx, locale, t, size = 'lg' }) {
 
 const REPORT_REASONS = ['scam', 'fake', 'unavailable', 'offensive', 'other'];
 
-function ListingCard({ l, t, locale, currency, fx, onOpen }) {
+function ListingCard({ l, t, locale, currency, fx, onOpen, userLoc }) {
   const photo = listingPhoto(l, 0);
   const same = l.price?.currency === currency;
   const priceLabel = same
@@ -154,9 +167,16 @@ function ListingCard({ l, t, locale, currency, fx, onOpen }) {
   const bedsLabel = l.property_type === 'room'
     ? t('listing.private_room')
     : (l.bedrooms > 0 ? `${l.bedrooms} ${t('listing.bedrooms_n')}` : t('ptype.studio'));
-  const walkLabel = l.walking_minutes != null
-    ? `${l.walking_minutes} dk`
-    : (l.distance_m != null ? `${(Number(l.distance_m) / 1000).toFixed(1)} km` : null);
+  const userDistM = l.distance_from_user_m ?? distanceToListing(userLoc, l);
+  const nearLabel = userDistM != null
+    ? `${formatDistance(userDistM, locale)} ${t('geo.from_you')}`
+    : null;
+  const campusLabel = l.walking_minutes != null
+    ? `${l.walking_minutes} ${locale === 'tr' ? 'dk' : 'min'} ${t('geo.to_campus')}`
+    : (l.distance_m != null
+      ? `${formatDistance(Number(l.distance_m), locale)} ${t('geo.to_campus')}`
+      : null);
+  const walkLabel = [nearLabel, campusLabel].filter(Boolean).join(' · ') || null;
 
   return (
     <button
@@ -267,6 +287,50 @@ function MapCircle({ l, t }) {
   );
 }
 
+function LocationBanner({ t, userLoc, locating, onAllow, onDismiss, compact }) {
+  if (userLoc) {
+    if (compact) return null;
+    return (
+      <div className="border-b border-emerald-100 bg-emerald-50/90 px-3 py-2 text-center text-xs font-medium text-emerald-900 sm:text-sm">
+        <MapPin className="inline h-3.5 w-3.5 me-1 align-[-2px]" />
+        {t('geo.active')}
+      </div>
+    );
+  }
+  return (
+    <div className="border-b border-[#0a4d68]/15 bg-[linear-gradient(90deg,#e8f4f7,#f6f4f0)] px-3 py-3 sm:px-4">
+      <div className="container flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#0a4d68]/10 text-[#0a4d68]">
+            <MapPin className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-[#0a3d54]">{t('geo.banner_title')}</div>
+            <p className="mt-0.5 text-xs leading-relaxed text-slate-600 sm:text-sm">{t('geo.banner_body')}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="h-10 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 sm:flex-none"
+          >
+            {t('geo.later')}
+          </button>
+          <button
+            type="button"
+            disabled={locating}
+            onClick={onAllow}
+            className="h-10 flex-1 rounded-xl bg-[#0a4d68] px-4 text-sm font-semibold text-white disabled:opacity-60 sm:flex-none"
+          >
+            {locating ? t('geo.locating') : t('geo.allow')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ===========================================================================
 // Main App
 // ===========================================================================
@@ -279,9 +343,44 @@ export default function App() {
   const [authModal, setAuthModal] = useState(false); // false | 'signin' | 'signup'
   const [reportModal, setReportModal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [userLoc, setUserLoc] = useState(null);
+  const [geoBanner, setGeoBanner] = useState(false);
+  const [locating, setLocating] = useState(false);
 
   const t = useMemo(() => tFor(locale), [locale]);
   const fx = config?.fx_to_gbp || { TRY: 0.0234, USD: 0.79, EUR: 0.855, GBP: 1 };
+
+  useEffect(() => {
+    const stored = loadStoredGeo();
+    if (stored) {
+      setUserLoc(stored);
+      return;
+    }
+    const pref = getGeoPref();
+    if (pref !== 'denied' && pref !== 'dismissed' && pref !== 'granted') {
+      setGeoBanner(true);
+    }
+  }, []);
+
+  const allowLocation = useCallback(async () => {
+    setLocating(true);
+    try {
+      const geo = await requestUserLocation();
+      setUserLoc(geo);
+      setGeoBanner(false);
+      return geo;
+    } catch (err) {
+      setGeoBanner(false);
+      throw err;
+    } finally {
+      setLocating(false);
+    }
+  }, []);
+
+  const dismissLocation = useCallback(() => {
+    setGeoPref('dismissed');
+    setGeoBanner(false);
+  }, []);
 
   useEffect(() => {
     api('config').then(r => r.json()).then(setConfig).catch(() => {});
@@ -325,7 +424,7 @@ export default function App() {
   const goUniversity = useCallback((slug) => setView({ name: 'university', slug }), []);
 
   const shared = { t, locale, currency, fx, config, goSearch, goListing, goUniversity,
-    auth, setAuth, setAuthModal, setReportModal };
+    auth, setAuth, setAuthModal, setReportModal, userLoc, requestLocation: allowLocation };
 
   return (
     <div className="min-h-screen text-slate-800">
@@ -338,6 +437,16 @@ export default function App() {
         </div>
       )}
 
+      {geoBanner && (
+        <LocationBanner
+          t={t}
+          userLoc={null}
+          locating={locating}
+          onAllow={allowLocation}
+          onDismiss={dismissLocation}
+        />
+      )}
+
       <main className="pb-2">
         {view.name === 'home' && <HomeView {...shared} setView={setView} />}
         {view.name === 'search' && <SearchView {...shared} initialFilters={view.filters} />}
@@ -345,10 +454,20 @@ export default function App() {
         {view.name === 'university' && <UniversityView {...shared} slug={view.slug} />}
         {view.name === 'scam' && <StaticView {...shared} kind="scam" />}
         {view.name === 'how' && <StaticView {...shared} kind="how" />}
-        {view.name === 'dashboard' && <DashboardView t={t} locale={locale} config={config} auth={auth} />}
+        {view.name === 'dashboard' && <DashboardView t={t} locale={locale} config={config} auth={auth} requestLocation={allowLocation} userLoc={userLoc} />}
         {view.name === 'admin' && <AdminView t={t} locale={locale} auth={auth} />}
         {view.name === 'whatsapp' && <WhatsAppView t={t} locale={locale} />}
         {view.name === 'saved' && <SavedView {...shared} />}
+        {view.name === 'messages' && (
+          <MessagesView
+            t={t}
+            locale={locale}
+            auth={auth}
+            setAuthModal={setAuthModal}
+            setView={setView}
+            initialId={view.id || null}
+          />
+        )}
         {view.name === 'profile' && (
           <ProfileView
             t={t}
@@ -408,9 +527,9 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
   const navItems = [
     ['search', () => go({ name: 'search', filters: {} })],
     ['dashboard', () => go({ name: 'dashboard' })],
-    ...(auth.signedIn ? [['saved', () => go({ name: 'saved' })]] : []),
+    ...(auth.signedIn ? [['messages', () => go({ name: 'messages' })], ['saved', () => go({ name: 'saved' })]] : []),
     ...(auth.role === 'admin' ? [['admin', () => go({ name: 'admin' })]] : []),
-    ['whatsapp', () => go({ name: 'whatsapp' })],
+    ...((config?.mock || process.env.NEXT_PUBLIC_SHOW_WHATSAPP_DEMO === 'true') ? [['whatsapp', () => go({ name: 'whatsapp' })]] : []),
   ];
   const guideItems = [
     ['how', () => go({ name: 'how' })],
@@ -420,9 +539,9 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
     ['search', () => go({ name: 'search', filters: {} })],
     ...guideItems,
     ['dashboard', () => go({ name: 'dashboard' })],
-    ...(auth.signedIn ? [['saved', () => go({ name: 'saved' })], ['profile', () => go({ name: 'profile' })]] : []),
+    ...(auth.signedIn ? [['messages', () => go({ name: 'messages' })], ['saved', () => go({ name: 'saved' })], ['profile', () => go({ name: 'profile' })]] : []),
     ...(auth.role === 'admin' ? [['admin', () => go({ name: 'admin' })]] : []),
-    ['whatsapp', () => go({ name: 'whatsapp' })],
+    ...((config?.mock || process.env.NEXT_PUBLIC_SHOW_WHATSAPP_DEMO === 'true') ? [['whatsapp', () => go({ name: 'whatsapp' })]] : []),
   ];
 
   useEffect(() => {
@@ -551,42 +670,122 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
 // ---------------------------------------------------------------------------
 // Home
 // ---------------------------------------------------------------------------
-function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniversity, setView }) {
+function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniversity, setView, userLoc }) {
   const [featured, setFeatured] = useState([]);
   const [featuredLoading, setFeaturedLoading] = useState(true);
   const [uni, setUni] = useState('');
   const [budget, setBudget] = useState('');
-  const [movein, setMovein] = useState('');
+  const [ptype, setPtype] = useState('');
+  const [maxWalk, setMaxWalk] = useState('');
+  const [maxDistanceM, setMaxDistanceM] = useState('');
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [uniOpen, setUniOpen] = useState(false);
+  const [uniQ, setUniQ] = useState('');
+  const [uniRegion, setUniRegion] = useState('');
+  const uniPickerRef = useRef(null);
 
   useEffect(() => {
     setFeaturedLoading(true);
-    api('listings?featured=1&limit=6')
+    const qs = new URLSearchParams({ featured: '1', limit: '6' });
+    if (userLoc?.lat != null && userLoc?.lng != null) {
+      qs.set('near_lat', String(userLoc.lat));
+      qs.set('near_lng', String(userLoc.lng));
+      qs.set('sort', 'near');
+    }
+    api(`listings?${qs}`)
       .then(r => r.json())
       .then(d => {
         setFeatured(d.items || []);
       })
       .catch(() => setFeatured([]))
       .finally(() => setFeaturedLoading(false));
-  }, []);
+  }, [userLoc?.lat, userLoc?.lng]);
+
+  useEffect(() => {
+    if (!uniOpen) return undefined;
+    const onDoc = (e) => {
+      if (uniPickerRef.current && !uniPickerRef.current.contains(e.target)) setUniOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setUniOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [uniOpen]);
 
   const stats = config?.stats;
   const unis = config?.universities || [];
-  const cities = config?.cities || [];
+  // Derive live fallbacks if config.stats is stale/missing
+  const liveStats = {
+    listings: stats?.listings ?? unis.reduce((n, u) => n + (u.listings_count || 0), 0),
+    universities: stats?.universities ?? unis.length,
+    verified_landlords: stats?.verified_landlords ?? 0,
+    cities: stats?.cities ?? new Set(unis.map((u) => u.city).filter(Boolean)).size,
+  };
+  const CITY_ORDER = ['Lefkoşa', 'Gazimağusa', 'Girne', 'Güzelyurt', 'Lefke'];
+  const unisByCity = (() => {
+    const map = new Map();
+    for (const u of unis) {
+      const city = u.city || '—';
+      if (!map.has(city)) map.set(city, []);
+      map.get(city).push(u);
+    }
+    return [...map.entries()].sort(([a], [b]) => {
+      const ai = CITY_ORDER.indexOf(a);
+      const bi = CITY_ORDER.indexOf(b);
+      const ao = ai === -1 ? 999 : ai;
+      const bo = bi === -1 ? 999 : bi;
+      return ao - bo || String(a).localeCompare(String(b), 'tr');
+    });
+  })();
+  const regionUnis = uniRegion
+    ? (unisByCity.find(([c]) => c === uniRegion)?.[1] || [])
+    : unisByCity.flatMap(([, list]) => list);
+  const selectedUni = unis.find((u) => u.id === uni);
+  const uniFilter = uniQ.trim().toLocaleLowerCase('tr');
+  const filteredUnisByCity = uniFilter
+    ? unisByCity
+      .map(([city, list]) => [
+        city,
+        list.filter((u) => {
+          const hay = `${u.short} ${u.name_tr} ${u.name_en} ${u.city}`.toLocaleLowerCase('tr');
+          return hay.includes(uniFilter);
+        }),
+      ])
+      .filter(([, list]) => list.length)
+    : unisByCity;
+  const budgetPresets = ({
+    TRY: [15000, 25000, 40000],
+    GBP: [300, 500, 800],
+    USD: [400, 650, 1000],
+    EUR: [350, 600, 900],
+  })[currency] || [300, 500, 800];
+  const walkPresets = [5, 10, 15, 20, 30, 45, 60];
+  const distancePresets = [
+    { m: 500, label: '500 m' },
+    { m: 1000, label: '1 km' },
+    { m: 2000, label: '2 km' },
+    { m: 5000, label: '5 km' },
+  ];
   const STAT = {
-    listings: t('universities.listings_count'),
-    universities: t('universities.title'),
-    verified_landlords: t('trust.verified_badge'),
-    cities: t('search.city'),
+    listings: t('home.stat_listings'),
+    universities: t('home.stat_universities'),
+    verified_landlords: t('home.stat_verified'),
+    cities: t('home.stat_cities'),
   };
   const trustIcons = [BadgeCheck, TrendingDown, ShieldAlert, Clock];
-  const uniTints = ['from-[#0a4d68] to-[#0e6a7a]', 'from-[#0b5a72] to-[#1a7a88]', 'from-[#08304a] to-[#0a4d68]', 'from-[#125e6e] to-[#0a4d68]', 'from-[#0a4d68] to-[#c9893a]', 'from-[#08415c] to-[#0e6a7a]'];
   const fieldCls = 'h-12 w-full min-w-0 rounded-2xl border border-slate-200/90 bg-white px-3.5 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25 focus:border-[#0a4d68]/40';
   const heroPhoto = '/hero.jpg';
 
   const runHeroSearch = () => goSearch({
     university: uni,
     price_max_display: budget ? convertMoney(Number(budget), currency, 'GBP', fx) : '',
-    movein,
+    ...(ptype ? { property_type: ptype } : {}),
+    ...(maxWalk ? { max_walk: String(maxWalk) } : {}),
+    ...(maxDistanceM ? { max_distance_m: String(maxDistanceM) } : {}),
+    ...((maxWalk || maxDistanceM) ? { sort: 'distance' } : {}),
   });
 
   return (
@@ -671,52 +870,219 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
 
           <form
             onSubmit={(e) => { e.preventDefault(); runHeroSearch(); }}
-            className="ko-fade-up-delay-2 mt-8 lg:mt-10 rounded-[1.75rem] bg-white p-3 sm:p-4 shadow-[0_28px_70px_-24px_rgba(4,24,32,0.55)] text-slate-800"
+            className="ko-fade-up-delay-2 mt-8 lg:mt-10 rounded-[1.75rem] bg-white p-3.5 sm:p-5 shadow-[0_28px_70px_-24px_rgba(4,24,32,0.55)] text-slate-800"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.35fr_1fr_1fr_auto] gap-2.5 sm:gap-3">
-              <label className="block">
+            <div className="grid grid-cols-1 sm:grid-cols-[1.45fr_1fr_auto] lg:grid-cols-[1.45fr_1fr_auto] gap-3">
+              <div className="relative" ref={uniPickerRef}>
                 <span className="mb-1.5 ms-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('search.university')}</span>
-                <select value={uni} onChange={e => setUni(e.target.value)} className={fieldCls}>
-                  <option value="">{t('search.any_university')}</option>
-                  {unis.map(u => <option key={u.id} value={u.id}>{u.short} — {locale === 'tr' ? u.name_tr : u.name_en}</option>)}
-                </select>
-              </label>
+                <button
+                  type="button"
+                  aria-expanded={uniOpen}
+                  aria-haspopup="listbox"
+                  onClick={() => setUniOpen((v) => !v)}
+                  className={`${fieldCls} flex items-center gap-2.5 text-start`}
+                >
+                  <GraduationCap className="h-4 w-4 shrink-0 text-[#0a4d68]" />
+                  <span className={`min-w-0 flex-1 truncate ${selectedUni ? 'text-slate-800 font-medium' : 'text-slate-400'}`}>
+                    {selectedUni
+                      ? `${selectedUni.short} — ${locale === 'tr' ? selectedUni.name_tr : selectedUni.name_en}`
+                      : t('search.any_university')}
+                  </span>
+                  {selectedUni ? (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); setUni(''); setUniQ(''); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setUni(''); setUniQ(''); } }}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                      aria-label={t('search.clear')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </span>
+                  ) : (
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${uniOpen ? 'rotate-180' : ''}`} />
+                  )}
+                </button>
+                {uniOpen && (
+                  <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_60px_-20px_rgba(10,61,84,0.45)]">
+                    <div className="border-b border-slate-100 p-2">
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <input
+                          autoFocus
+                          value={uniQ}
+                          onChange={(e) => setUniQ(e.target.value)}
+                          placeholder={t('home.search_uni')}
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-[#f8fafb] pe-3 ps-9 text-sm outline-none focus:border-[#0a4d68]/40 focus:ring-2 focus:ring-[#0a4d68]/20"
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto overscroll-contain py-1" role="listbox">
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={!uni}
+                        onClick={() => { setUni(''); setUniOpen(false); setUniQ(''); }}
+                        className={`flex w-full items-center gap-2 px-3 py-2.5 text-start text-sm hover:bg-[var(--ko-mist)] ${!uni ? 'bg-[var(--ko-mist)] font-semibold text-[#0a4d68]' : 'text-slate-700'}`}
+                      >
+                        {t('search.any_university')}
+                      </button>
+                      {filteredUnisByCity.length === 0 && (
+                        <p className="px-3 py-4 text-center text-sm text-slate-400">{t('search.no_results')}</p>
+                      )}
+                      {filteredUnisByCity.map(([city, list]) => (
+                        <div key={city}>
+                          <div className="sticky top-0 z-[1] bg-[#f4f7f9] px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                            {city}
+                          </div>
+                          {list.map((u) => (
+                            <button
+                              key={u.id}
+                              type="button"
+                              role="option"
+                              aria-selected={uni === u.id}
+                              onClick={() => { setUni(u.id); setUniOpen(false); setUniQ(''); }}
+                              className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-start hover:bg-[var(--ko-mist)] ${uni === u.id ? 'bg-[var(--ko-mist)]' : ''}`}
+                            >
+                              <span className="inline-flex h-7 min-w-[2.75rem] items-center justify-center rounded-md bg-[#0a4d68]/10 px-1.5 text-[10px] font-bold text-[#0a4d68]">
+                                {u.short}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium text-[#0a3d54]">
+                                  {locale === 'tr' ? u.name_tr : u.name_en}
+                                </span>
+                                <span className="block text-[11px] text-slate-500 tabular-nums">
+                                  {u.listings_count ?? 0} {t('universities.listings_count')}
+                                </span>
+                              </span>
+                              {uni === u.id && <Check className="h-4 w-4 shrink-0 text-[#0a4d68]" />}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <label className="block">
                 <span className="mb-1.5 ms-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('search.budget')}</span>
-                <input inputMode="numeric" type="number" value={budget} onChange={e => setBudget(e.target.value)}
-                  placeholder={`${SYMBOL[currency]}`} className={fieldCls} />
+                <div className="relative">
+                  <span className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">{SYMBOL[currency]}</span>
+                  <input
+                    inputMode="numeric"
+                    type="number"
+                    min="0"
+                    value={budget}
+                    onChange={(e) => setBudget(e.target.value)}
+                    placeholder={t('home.budget_max')}
+                    className={`${fieldCls} ps-9`}
+                  />
+                </div>
               </label>
-              <label className="block">
-                <span className="mb-1.5 ms-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('search.movein')}</span>
-                <input type="date" value={movein} onChange={e => setMovein(e.target.value)} className={fieldCls} />
-              </label>
-              <div className="flex items-end sm:col-span-2 lg:col-span-1">
-                <button type="submit" className="ko-btn-accent h-12 w-full rounded-2xl px-6 text-base shadow-sm">
+
+              <div className="flex items-end">
+                <button type="submit" className="ko-btn-accent h-12 w-full sm:min-w-[8.5rem] rounded-2xl px-6 text-base shadow-sm">
                   <Search className="h-5 w-5" /> {t('search.button')}
                 </button>
               </div>
             </div>
-            <div className="mt-3 pt-3 border-t border-slate-100">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2 ms-1">{t('home.browse_types')}</div>
-              <div className="flex gap-2 overflow-x-auto ko-hide-scroll pb-0.5 -mx-1 px-1">
-                {['apartment', 'studio', 'room', 'house'].map((p) => (
-                  <button key={p} type="button" onClick={() => goSearch({ property_type: p })}
-                    className="shrink-0 h-10 rounded-full border border-slate-200 bg-[#f6f4f0] px-4 text-sm font-semibold text-[#0a3d54] hover:bg-[#0a4d68] hover:text-white hover:border-[#0a4d68] transition-colors">
-                    {t(`ptype.${p}`)}
+
+            <div className="mt-3.5 flex flex-wrap gap-1.5">
+              {budgetPresets.map((n) => {
+                const active = String(budget) === String(n);
+                return (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setBudget(active ? '' : String(n))}
+                    className={`h-8 rounded-full border px-3 text-xs font-semibold transition-colors ${active ? 'border-[#0a4d68] bg-[#0a4d68] text-white' : 'border-slate-200 bg-[#f6f4f0] text-[#0a3d54] hover:border-[#0a4d68]/40'}`}
+                  >
+                    ≤ {SYMBOL[currency]}{n.toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}
                   </button>
-                ))}
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setMoreOpen((v) => !v)}
+                className={`ms-auto inline-flex h-8 items-center gap-1 rounded-full border px-3 text-xs font-semibold transition-colors ${moreOpen ? 'border-[#0a4d68] bg-[var(--ko-mist)] text-[#0a4d68]' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                {t('home.more_options')}
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+
+            <div className="mt-3.5 border-t border-slate-100 pt-3.5">
+              <div className="mb-2 ms-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('home.browse_types')}</div>
+              <div className="flex gap-2 overflow-x-auto ko-hide-scroll pb-0.5 -mx-1 px-1">
+                {['apartment', 'studio', 'room', 'house'].map((p) => {
+                  const active = ptype === p;
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPtype(active ? '' : p)}
+                      className={`shrink-0 h-10 rounded-full border px-4 text-sm font-semibold transition-colors ${active ? 'border-[#0a4d68] bg-[#0a4d68] text-white' : 'border-slate-200 bg-[#f6f4f0] text-[#0a3d54] hover:border-[#0a4d68]'}`}
+                    >
+                      {t(`ptype.${p}`)}
+                    </button>
+                  );
+                })}
               </div>
             </div>
+
+            {moreOpen && (
+              <div className="mt-3.5 rounded-2xl border border-slate-100 bg-[#f8fafb] p-3 sm:p-3.5">
+                <div className="mb-1 ms-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('search.max_walk')}</div>
+                <p className="mb-2 ms-0.5 text-[11px] text-slate-500">{t('search.max_walk_hint')}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setMaxWalk(''); setMaxDistanceM(''); }}
+                    className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold ${!maxWalk && !maxDistanceM ? 'border-[#0a4d68] bg-[#0a4d68] text-white' : 'border-slate-200 bg-white text-slate-600'}`}
+                  >
+                    {t('search.any')}
+                  </button>
+                  {walkPresets.map((m) => (
+                    <button
+                      key={`w-${m}`}
+                      type="button"
+                      onClick={() => {
+                        setMaxDistanceM('');
+                        setMaxWalk(maxWalk === String(m) ? '' : String(m));
+                      }}
+                      className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold ${maxWalk === String(m) ? 'border-[#0a4d68] bg-[#0a4d68] text-white' : 'border-slate-200 bg-white text-slate-600'}`}
+                    >
+                      <Footprints className="h-3.5 w-3.5" /> ≤ {m} {locale === 'tr' ? 'dk' : 'min'}
+                    </button>
+                  ))}
+                  {distancePresets.map(({ m, label }) => (
+                    <button
+                      key={`d-${m}`}
+                      type="button"
+                      onClick={() => {
+                        setMaxWalk('');
+                        setMaxDistanceM(maxDistanceM === String(m) ? '' : String(m));
+                      }}
+                      className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold ${maxDistanceM === String(m) ? 'border-[#0a4d68] bg-[#0a4d68] text-white' : 'border-slate-200 bg-white text-slate-600'}`}
+                    >
+                      <MapPin className="h-3.5 w-3.5" /> ≤ {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </form>
         </div>
       </section>
 
-      {stats && (
+      {config && (
         <section className="container -mt-12 sm:-mt-16 relative z-10">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-            {[['listings', stats.listings], ['universities', stats.universities], ['verified_landlords', stats.verified_landlords], ['cities', stats.cities]].map(([k, v]) => (
+            {[['listings', liveStats.listings], ['universities', liveStats.universities], ['verified_landlords', liveStats.verified_landlords], ['cities', liveStats.cities]].map(([k, v]) => (
               <div key={k} className="rounded-2xl sm:rounded-3xl bg-white border border-[#0a3d54]/8 p-4 sm:p-5 text-center shadow-[0_12px_40px_-24px_rgba(10,61,84,0.35)]">
-                <div className="ko-display text-2xl sm:text-3xl font-semibold text-[#0a4d68] tabular-nums">{v}</div>
+                <div className="ko-display text-2xl sm:text-3xl font-semibold text-[#0a4d68] tabular-nums">{Number(v) || 0}</div>
                 <div className="text-[11px] sm:text-xs text-slate-500 mt-1 leading-snug">{STAT[k]}</div>
               </div>
             ))}
@@ -743,7 +1109,7 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
           )}
           {featured.map(l => (
             <div key={l.id} className="min-w-[82%] snap-start sm:min-w-0">
-              <ListingCard l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />
+              <ListingCard l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} userLoc={userLoc} />
             </div>
           ))}
         </div>
@@ -777,46 +1143,108 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
         </div>
       </section>
 
-      <section className="container py-14 md:py-20">
-        <div className="flex items-end justify-between gap-3 mb-6">
-          <div>
-            <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54]">{t('universities.title')}</h2>
-            <p className="text-sm text-slate-500 mt-1">{t('home.unis_sub')}</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-          {unis.map((u, i) => (
-            <button key={u.id} onClick={() => goUniversity(u.slug)}
-              className="group relative overflow-hidden rounded-3xl text-start min-h-[8.5rem] p-5 text-white shadow-md">
-              <div className={`absolute inset-0 bg-gradient-to-br ${uniTints[i % uniTints.length]}`} />
-              <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(circle at 80% 20%, white 0, transparent 40%)' }} />
-              <div className="relative flex flex-col h-full min-h-[6.5rem]">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold tracking-wider bg-white/15 rounded-full px-2.5 py-1">{u.short}</span>
-                  <ChevronRight className="h-4 w-4 opacity-70 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5 transition-transform" />
-                </div>
-                <div className="mt-auto pt-6">
-                  <div className="font-semibold leading-snug text-[15px] sm:text-base">{locale === 'tr' ? u.name_tr : u.name_en}</div>
-                  <div className="text-xs text-white/70 mt-1">{u.city} · {u.listings_count} {t('universities.listings_count')}</div>
-                </div>
+      <section className="relative mt-4 overflow-hidden py-16 md:py-24">
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,#eef4f7_0%,#f6f4f0_48%,#f6f4f0_100%)]" />
+        <div className="pointer-events-none absolute -top-24 start-1/2 h-64 w-[42rem] -translate-x-1/2 rounded-full bg-[#0a4d68]/08 blur-3xl" />
+        <div className="container relative">
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between lg:gap-12">
+            <div className="max-w-xl">
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#0a3d54]/10 bg-white/80 px-3 py-1 text-[11px] font-semibold tracking-wide text-[#0a4d68]">
+                <GraduationCap className="h-3.5 w-3.5" />
+                {unis.length} {t('home.campuses')}
               </div>
-            </button>
-          ))}
-        </div>
-
-        {cities.length > 0 && (
-          <div className="mt-10">
-            <h3 className="text-sm font-semibold text-slate-500 mb-3">{t('home.cities_title')}</h3>
-            <div className="flex gap-2 overflow-x-auto ko-hide-scroll -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
-              {cities.map((c) => (
-                <button key={c} type="button" onClick={() => goSearch({ city: c })}
-                  className="shrink-0 inline-flex items-center gap-2 h-11 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-[#0a3d54] hover:border-[#0a4d68] hover:bg-[#e8f2f6] transition-colors">
-                  <MapPin className="h-4 w-4 text-[#0a4d68]" /> {c}
+              <h2 className="ko-display mt-3 text-3xl md:text-4xl font-semibold text-[#0a3d54] tracking-tight">
+                {t('universities.title')}
+              </h2>
+              <p className="mt-2 text-sm sm:text-base text-slate-500 leading-relaxed">
+                {t('home.unis_sub')}
+              </p>
+            </div>
+            <div className="flex gap-2 overflow-x-auto ko-hide-scroll -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 lg:max-w-[34rem] lg:flex-wrap lg:justify-end lg:overflow-visible">
+              <button
+                type="button"
+                onClick={() => setUniRegion('')}
+                className={`shrink-0 h-10 rounded-full px-4 text-sm font-semibold transition-colors ${!uniRegion ? 'bg-[#0a3d54] text-white shadow-sm' : 'bg-white/90 text-[#0a3d54] border border-[#0a3d54]/10 hover:bg-white'}`}
+              >
+                {t('home.all_regions')}
+              </button>
+              {unisByCity.map(([city, list]) => (
+                <button
+                  key={city}
+                  type="button"
+                  onClick={() => setUniRegion(city)}
+                  className={`shrink-0 h-10 rounded-full px-4 text-sm font-semibold transition-colors ${uniRegion === city ? 'bg-[#0a3d54] text-white shadow-sm' : 'bg-white/90 text-[#0a3d54] border border-[#0a3d54]/10 hover:bg-white'}`}
+                >
+                  {city}
+                  <span className={`ms-1.5 tabular-nums ${uniRegion === city ? 'text-white/70' : 'text-slate-400'}`}>{list.length}</span>
                 </button>
               ))}
             </div>
           </div>
-        )}
+
+          <div className="mt-8 sm:mt-10 overflow-hidden rounded-[1.75rem] border border-[#0a3d54]/10 bg-white/95 shadow-[0_30px_80px_-40px_rgba(10,61,84,0.45)] backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 sm:px-6 py-3.5 bg-[linear-gradient(90deg,rgba(232,242,246,0.9),rgba(255,255,255,0.6))]">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#0a4d68] text-white">
+                  <MapPin className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate font-semibold text-[#0a3d54]">
+                    {uniRegion || t('home.all_regions')}
+                  </div>
+                  <div className="text-[11px] text-slate-500 tabular-nums">
+                    {regionUnis.length} {t('home.campuses')}
+                  </div>
+                </div>
+              </div>
+              {uniRegion && (
+                <button
+                  type="button"
+                  onClick={() => goSearch({ city: uniRegion })}
+                  className="shrink-0 inline-flex h-9 items-center gap-1 rounded-full border border-[#0a3d54]/12 bg-white px-3 text-xs font-semibold text-[#0a4d68] hover:bg-[var(--ko-mist)]"
+                >
+                  {t('universities.explore')}
+                  <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2">
+              {regionUnis.map((u) => (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => goUniversity(u.slug)}
+                  className="group flex items-center gap-3.5 border-b border-slate-100 px-4 sm:px-5 py-4 text-start transition-colors last:border-b-0 hover:bg-[var(--ko-mist)]/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0a4d68]/30 md:odd:border-e md:[&:nth-last-child(-n+2)]:border-b-0"
+                >
+                  <span className="relative flex h-12 min-w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[linear-gradient(145deg,#0a4d68,#0e6a7a)] px-1 text-[9px] sm:text-[10px] font-bold tracking-wide text-white shadow-[0_10px_24px_-12px_rgba(10,77,104,0.7)]">
+                    <span className="absolute inset-0 opacity-30" style={{ backgroundImage: 'radial-gradient(circle at 30% 20%, white, transparent 55%)' }} />
+                    <span className="relative text-center leading-tight">{u.short}</span>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] sm:text-[15px] font-semibold text-[#0a3d54] leading-snug">
+                      {locale === 'tr' ? u.name_tr : u.name_en}
+                    </span>
+                    <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] sm:text-xs text-slate-500">
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin className="h-3 w-3 text-slate-400" />
+                        {u.city}
+                      </span>
+                      <span className="text-slate-300">·</span>
+                      <span className="tabular-nums">
+                        <span className="font-semibold text-[#0a4d68]">{u.listings_count ?? 0}</span>
+                        {' '}{t('universities.listings_count')}
+                      </span>
+                    </span>
+                  </span>
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-50 text-slate-300 transition-all group-hover:bg-[#0a4d68] group-hover:text-white">
+                    <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="container pb-16 md:pb-20">
@@ -869,15 +1297,18 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
 // ---------------------------------------------------------------------------
 const AMENITY_KEYS = Object.keys(AMENITY);
 
-function SearchView({ t, locale, currency, fx, config, goListing, initialFilters }) {
+function SearchView({ t, locale, currency, fx, config, goListing, initialFilters, userLoc, requestLocation }) {
   const unis = config?.universities || [];
   const cities = config?.cities || [];
   const [f, setF] = useState({
     university: initialFilters?.university || '',
     city: initialFilters?.city || '', property_type: initialFilters?.property_type || '', bedrooms: '', gender: '',
     furnished: false, bills_included: false, verified_only: false,
-    max_walk: '', price_min: '', price_max: initialFilters?.price_max_display || '',
-    amenities: [], sort: 'new',
+    max_walk: initialFilters?.max_walk || '',
+    max_distance_m: initialFilters?.max_distance_m || '',
+    price_min: '', price_max: initialFilters?.price_max_display || '',
+    amenities: [],
+    sort: initialFilters?.sort || (userLoc ? 'near' : 'new'),
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [debouncedF, setDebouncedF] = useState(f);
@@ -886,6 +1317,12 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
     const timer = setTimeout(() => setDebouncedF(f), 300);
     return () => clearTimeout(timer);
   }, [f]);
+
+  useEffect(() => {
+    if (userLoc && f.sort === 'new') {
+      setF((s) => (s.sort === 'new' ? { ...s, sort: 'near' } : s));
+    }
+  }, [userLoc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const searchKey = useMemo(() => {
     const p = new URLSearchParams();
@@ -898,13 +1335,18 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
     if (debouncedF.bills_included) p.set('bills_included', 'true');
     if (debouncedF.verified_only) p.set('verified_only', 'true');
     if (debouncedF.max_walk) p.set('max_walk', debouncedF.max_walk);
+    if (debouncedF.max_distance_m) p.set('max_distance_m', debouncedF.max_distance_m);
     if (debouncedF.amenities.length) p.set('amenities', debouncedF.amenities.join(','));
     if (debouncedF.price_min) p.set('price_min', convertMoney(Number(debouncedF.price_min), currency, 'GBP', fx));
     if (debouncedF.price_max) p.set('price_max', convertMoney(Number(debouncedF.price_max), currency, 'GBP', fx));
+    if (userLoc?.lat != null && userLoc?.lng != null) {
+      p.set('near_lat', String(userLoc.lat));
+      p.set('near_lng', String(userLoc.lng));
+    }
     p.set('sort', debouncedF.sort);
     p.set('limit', '48');
     return p.toString();
-  }, [debouncedF, currency, fx]);
+  }, [debouncedF, currency, fx, userLoc]);
 
   const { data, isFetching, isError, refetch } = useQuery({
     queryKey: ['listings', searchKey],
@@ -922,7 +1364,7 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
   const searchErr = isError;
 
   const toggleAmenity = (a) => setF(s => ({ ...s, amenities: s.amenities.includes(a) ? s.amenities.filter(x => x !== a) : [...s.amenities, a] }));
-  const clear = () => setF({ university: '', city: '', property_type: '', bedrooms: '', gender: '', furnished: false, bills_included: false, verified_only: false, max_walk: '', price_min: '', price_max: '', amenities: [], sort: 'new' });
+  const clear = () => setF({ university: '', city: '', property_type: '', bedrooms: '', gender: '', furnished: false, bills_included: false, verified_only: false, max_walk: '', max_distance_m: '', price_min: '', price_max: '', amenities: [], sort: userLoc ? 'near' : 'new' });
 
   const FilterField = ({ label, children }) => (
     <div className="mb-4">
@@ -945,10 +1387,38 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
         </select>
       </FilterField>
       <FilterField label={t('search.max_walk')}>
-        <select className={selCls} value={f.max_walk} onChange={e => setF(s => ({ ...s, max_walk: e.target.value }))}>
-          <option value="">{t('search.any')}</option>
-          {[5, 10, 15, 20, 30].map(w => <option key={w} value={w}>{w} dk</option>)}
-        </select>
+        <div className="space-y-2">
+          <select
+            className={selCls}
+            value={f.max_walk ? `w:${f.max_walk}` : (f.max_distance_m ? `d:${f.max_distance_m}` : '')}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) {
+                setF((s) => ({ ...s, max_walk: '', max_distance_m: '' }));
+                return;
+              }
+              if (v.startsWith('w:')) {
+                setF((s) => ({ ...s, max_walk: v.slice(2), max_distance_m: '', sort: s.sort === 'near' ? s.sort : 'distance' }));
+              } else if (v.startsWith('d:')) {
+                setF((s) => ({ ...s, max_distance_m: v.slice(2), max_walk: '', sort: s.sort === 'near' ? s.sort : 'distance' }));
+              }
+            }}
+          >
+            <option value="">{t('search.any')}</option>
+            <optgroup label={locale === 'tr' ? 'Yürüme süresi' : 'Walk time'}>
+              {[5, 10, 15, 20, 30, 45, 60].map((w) => (
+                <option key={`w-${w}`} value={`w:${w}`}>{`≤ ${w} ${locale === 'tr' ? 'dk' : 'min'}`}</option>
+              ))}
+            </optgroup>
+            <optgroup label={locale === 'tr' ? 'Mesafe' : 'Distance'}>
+              <option value="d:500">≤ 500 m</option>
+              <option value="d:1000">≤ 1 km</option>
+              <option value="d:2000">≤ 2 km</option>
+              <option value="d:5000">≤ 5 km</option>
+            </optgroup>
+          </select>
+          <p className="text-[11px] text-slate-500 leading-snug">{t('search.max_walk_hint')}</p>
+        </div>
       </FilterField>
       <FilterField label={t('search.city')}>
         <select className={selCls} value={f.city} onChange={e => setF(s => ({ ...s, city: e.target.value }))}>
@@ -1039,9 +1509,19 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
               <option value="new">{t('search.sort_new')}</option>
               <option value="price_asc">{t('search.sort_price_asc')}</option>
               <option value="price_desc">{t('search.sort_price_desc')}</option>
+              {userLoc && <option value="near">{t('search.sort_near')}</option>}
               <option value="distance">{t('search.sort_distance')}</option>
             </select>
           </div>
+          {!userLoc && (
+            <button
+              type="button"
+              onClick={() => requestLocation?.()}
+              className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-[#0a4d68]/20 bg-[#e8f4f7]/80 px-3 py-2.5 text-sm font-medium text-[#0a3d54] sm:w-auto"
+            >
+              <MapPin className="h-4 w-4" /> {t('geo.allow')}
+            </button>
+          )}
           {loading ? (
             <div className="text-center py-20 text-slate-400">{t('common.loading')}</div>
           ) : searchErr ? (
@@ -1050,7 +1530,7 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
             <div className="text-center py-20 text-slate-400">{t('search.no_results')}</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-              {items.map(l => <ListingCard key={l.id} l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />)}
+              {items.map(l => <ListingCard key={l.id} l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} userLoc={userLoc} />)}
             </div>
           )}
         </div>
@@ -1062,12 +1542,17 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
 // ---------------------------------------------------------------------------
 // Listing detail
 // ---------------------------------------------------------------------------
-function ListingView({ t, locale, currency, fx, refCode, setView, goListing, auth, setAuth, setAuthModal, setReportModal }) {
+function ListingView({ t, locale, currency, fx, refCode, setView, goListing, auth, setAuth, setAuthModal, setReportModal, userLoc }) {
   const [photoIdx, setPhotoIdx] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const [reveal, setReveal] = useState(null);
   const [revealErr, setRevealErr] = useState('');
   const [showOriginal, setShowOriginal] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [msgDraft, setMsgDraft] = useState('');
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [msgErr, setMsgErr] = useState('');
+  const [msgOk, setMsgOk] = useState(null);
   const thumbStripRef = useRef(null);
   const [thumbCanScroll, setThumbCanScroll] = useState({ left: false, right: false });
 
@@ -1103,11 +1588,31 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
 
   useEffect(() => {
     setPhotoIdx(0);
+    setLightboxOpen(false);
     setReveal(null);
     setRevealErr('');
     setShowOriginal(false);
     setSaved(false);
   }, [refCode]);
+
+  useEffect(() => {
+    if (!lightboxOpen) return undefined;
+    const count = (Array.isArray(listingData?.photos) && listingData.photos.length)
+      ? listingData.photos.length
+      : 3;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e) => {
+      if (e.key === 'Escape') setLightboxOpen(false);
+      if (e.key === 'ArrowLeft') setPhotoIdx((i) => (i - 1 + count) % count);
+      if (e.key === 'ArrowRight') setPhotoIdx((i) => (i + 1) % count);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [lightboxOpen, listingData?.photos]);
 
   useEffect(() => {
     const el = thumbStripRef.current;
@@ -1124,6 +1629,7 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
   }, [l?.id, updateThumbScrollHints]);
 
   useEffect(() => {
+    if (lightboxOpen) return;
     const strip = thumbStripRef.current;
     if (!strip) return;
     const active = strip.querySelector(`[data-thumb-idx="${photoIdx}"]`);
@@ -1131,7 +1637,7 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
       active.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
     updateThumbScrollHints();
-  }, [photoIdx, updateThumbScrollHints]);
+  }, [photoIdx, lightboxOpen, updateThumbScrollHints]);
 
   useEffect(() => {
     if (!auth?.signedIn || !l?.id) return;
@@ -1184,6 +1690,36 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
       return;
     }
     setReveal(await res.json());
+  };
+
+  const doSendMessage = async () => {
+    setMsgErr('');
+    setMsgOk(null);
+    const text = msgDraft.trim();
+    if (!text) return;
+    const session = await refreshSessionIntoAuth(setAuth);
+    if (!session?.user) {
+      setAuthModal('signin');
+      return;
+    }
+    setMsgBusy(true);
+    const res = await api('messages', {
+      method: 'POST',
+      body: JSON.stringify({ ref: refCode, body: text }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setMsgBusy(false);
+    if (res.status === 401) {
+      setAuthModal('signin');
+      return;
+    }
+    if (!res.ok) {
+      if (data.error === 'own_listing') setMsgErr(t('contact.message_own'));
+      else setMsgErr(t('contact.message_error'));
+      return;
+    }
+    setMsgDraft('');
+    setMsgOk(data.conversation_id);
   };
 
   const toggleSave = async () => {
@@ -1243,10 +1779,16 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                 decoding="async"
                 fetchPriority="high"
               />
-              <div className="absolute top-2.5 start-2.5 end-2.5 flex flex-wrap gap-1.5">
-                {l.landlord_verified && <VerifiedPill t={t} />}
+              <button
+                type="button"
+                onClick={() => setLightboxOpen(true)}
+                className="absolute inset-0 z-[1] cursor-zoom-in bg-transparent"
+                aria-label={locale === 'tr' ? 'Fotoğrafı büyüt' : 'Enlarge photo'}
+              />
+              <div className="pointer-events-none absolute top-2.5 start-2.5 end-2.5 z-[2] flex flex-wrap gap-1.5">
+                {l.landlord_verified && <span className="pointer-events-auto"><VerifiedPill t={t} /></span>}
                 {l.landlord_is_agency && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white/90 text-slate-700 px-2.5 py-1 text-xs font-semibold">
+                  <span className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-white/90 text-slate-700 px-2.5 py-1 text-xs font-semibold">
                     <Building2 className="h-3.5 w-3.5" /> {t('listing.agency')}
                   </span>
                 )}
@@ -1262,7 +1804,7 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                     type="button"
                     aria-label="Önceki"
                     onClick={() => setPhotoIdx((i) => (i - 1 + photos.length) % photos.length)}
-                    className="absolute start-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-black/40 text-white flex items-center justify-center"
+                    className="absolute start-2 top-1/2 z-[3] -translate-y-1/2 h-10 w-10 rounded-full bg-black/45 text-white flex items-center justify-center"
                   >
                     <ChevronLeft className="h-5 w-5" />
                   </button>
@@ -1270,7 +1812,7 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                     type="button"
                     aria-label="Sonraki"
                     onClick={() => setPhotoIdx((i) => (i + 1) % photos.length)}
-                    className="absolute end-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-black/40 text-white flex items-center justify-center"
+                    className="absolute end-2 top-1/2 z-[3] -translate-y-1/2 h-10 w-10 rounded-full bg-black/45 text-white flex items-center justify-center"
                   >
                     <ChevronRight className="h-5 w-5" />
                   </button>
@@ -1353,10 +1895,28 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                   <Users className="h-3.5 w-3.5 shrink-0" /> {t('listing.shared')} · +{l.flatmates} {t('listing.flatmates')}
                 </span>
               )}
+              {(() => {
+                const d = distanceToListing(userLoc, l);
+                if (d == null) return null;
+                return (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-100 px-2.5 py-1 text-xs font-semibold">
+                    <MapPin className="h-3.5 w-3.5 shrink-0" />
+                    {formatDistance(d, locale)} {t('geo.from_you')}
+                  </span>
+                );
+              })()}
               {l.walking_minutes != null && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68] text-white px-2.5 py-1 text-xs font-semibold max-w-full">
                   <Waypoints className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{l.walking_minutes} dk {t('listing.walk_to')} ({l.university?.short || '—'})</span>
+                  <span className="truncate">
+                    {l.walking_minutes} {locale === 'tr' ? 'dk' : 'min'}
+                    {l.distance_m != null ? ` · ${formatDistance(Number(l.distance_m), locale)}` : ''}
+                    {' '}{t('listing.walk_to')} (
+                    {(l.universities?.length
+                      ? l.universities.map((u) => u.short).join(', ')
+                      : l.university?.short) || '—'}
+                    )
+                  </span>
                 </span>
               )}
               {daysConfirmed != null && (
@@ -1503,6 +2063,44 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                 </button>
               </div>
             )}
+
+            <div id="listing-message-box" className="mt-5 pt-4 border-t border-slate-100">
+              <h4 className="font-bold text-[#0a3d54] mb-2 flex items-center gap-2 text-sm">
+                <MessageCircle className="h-4 w-4 shrink-0" /> {t('contact.message_title')}
+              </h4>
+              {msgOk ? (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
+                  <p className="text-sm text-emerald-900">{t('contact.message_sent')}</p>
+                  <button
+                    type="button"
+                    onClick={() => setView({ name: 'messages', id: msgOk })}
+                    className="mt-2 w-full h-10 rounded-xl bg-[#0a4d68] text-white text-sm font-semibold"
+                  >
+                    {t('contact.message_open')}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <textarea
+                    id="listing-message-input"
+                    rows={3}
+                    value={msgDraft}
+                    onChange={(e) => setMsgDraft(e.target.value.slice(0, 2000))}
+                    placeholder={t('contact.message_ph')}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/25 resize-none"
+                  />
+                  {msgErr && <p className="text-xs text-red-600 mt-1.5">{msgErr}</p>}
+                  <button
+                    type="button"
+                    disabled={msgBusy || !msgDraft.trim()}
+                    onClick={doSendMessage}
+                    className="mt-2 w-full h-11 rounded-xl border border-[#0a4d68] text-[#0a4d68] font-semibold hover:bg-[#e8f4f7] disabled:opacity-50"
+                  >
+                    {auth.signedIn ? (msgBusy ? t('common.loading') : t('contact.message_send')) : t('contact.message_signin')}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <ScamBanner t={t} compact />
@@ -1513,24 +2111,111 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
         <div className="mt-10 sm:mt-12 mb-4 min-w-0">
           <h2 className="text-xl font-bold text-[#0a3d54] mb-5">{t('listing.similar')}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-            {l.similar.map(s => <ListingCard key={s.id} l={s} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />)}
+            {l.similar.map(s => <ListingCard key={s.id} l={s} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} userLoc={userLoc} />)}
           </div>
         </div>
       )}
 
       <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        {reveal ? (
-          <a href={reveal.whatsapp_url} target="_blank" rel="noreferrer"
-            className="flex items-center justify-center gap-2 h-12 rounded-xl bg-[#25D366] text-white font-semibold w-full max-w-lg mx-auto">
-            <MessageCircle className="h-5 w-5 shrink-0" /> {t('contact.whatsapp')}
-          </a>
-        ) : (
-          <button type="button" onClick={doReveal}
-            className="w-full max-w-lg mx-auto h-12 rounded-xl bg-[#0a4d68] text-white font-semibold block">
-            {auth.signedIn ? t('contact.reveal') : t('contact.signin_to_reveal')}
+        <div className="flex gap-2 w-full max-w-lg mx-auto">
+          {reveal ? (
+            <a href={reveal.whatsapp_url} target="_blank" rel="noreferrer"
+              className="flex flex-1 items-center justify-center gap-2 h-12 rounded-xl bg-[#25D366] text-white font-semibold">
+              <MessageCircle className="h-5 w-5 shrink-0" /> {t('contact.whatsapp')}
+            </a>
+          ) : (
+            <button type="button" onClick={doReveal}
+              className="flex-1 h-12 rounded-xl bg-[#0a4d68] text-white font-semibold">
+              {auth.signedIn ? t('contact.reveal') : t('contact.signin_to_reveal')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              if (!auth.signedIn) { setAuthModal('signin'); return; }
+              document.getElementById('listing-message-box')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              document.getElementById('listing-message-input')?.focus();
+            }}
+            className="h-12 px-4 rounded-xl border border-[#0a4d68] text-[#0a4d68] font-semibold shrink-0"
+          >
+            {t('contact.message_title')}
           </button>
-        )}
+        </div>
       </div>
+
+      {lightboxOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex flex-col bg-black"
+          role="dialog"
+          aria-modal="true"
+          aria-label={locale === 'tr' ? 'Fotoğraf galerisi' : 'Photo gallery'}
+        >
+          <div className="flex shrink-0 items-center justify-between gap-3 px-3 sm:px-5 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2">
+            <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold tabular-nums text-white/90">
+              {photoIdx + 1}/{photos.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => setLightboxOpen(false)}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white"
+              aria-label={locale === 'tr' ? 'Kapat' : 'Close'}
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="relative flex min-h-0 flex-1 items-center justify-center px-12 sm:px-16">
+            {photos.length > 1 && (
+              <button
+                type="button"
+                aria-label="Önceki"
+                onClick={() => setPhotoIdx((i) => (i - 1 + photos.length) % photos.length)}
+                className="absolute start-2 sm:start-4 top-1/2 z-10 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white"
+              >
+                <ChevronLeft className="h-6 w-6" />
+              </button>
+            )}
+            <img
+              src={photos[photoIdx] || photos[0]}
+              alt={title || ''}
+              onError={(e) => { e.currentTarget.src = MOCK_PHOTOS[0]; }}
+              className="max-h-full max-w-full object-contain"
+              decoding="async"
+            />
+            {photos.length > 1 && (
+              <button
+                type="button"
+                aria-label="Sonraki"
+                onClick={() => setPhotoIdx((i) => (i + 1) % photos.length)}
+                className="absolute end-2 sm:end-4 top-1/2 z-10 -translate-y-1/2 flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white"
+              >
+                <ChevronRight className="h-6 w-6" />
+              </button>
+            )}
+          </div>
+
+          {photos.length > 1 && (
+            <div className="flex shrink-0 justify-center gap-2 overflow-x-auto ko-hide-scroll px-4 py-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              {photos.map((p, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setPhotoIdx(i)}
+                  className={`h-12 w-16 shrink-0 overflow-hidden rounded-lg border-2 ${i === photoIdx ? 'border-white' : 'border-transparent opacity-55'}`}
+                >
+                  <img
+                    src={p}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    onError={(e) => { e.currentTarget.src = MOCK_PHOTOS[i % MOCK_PHOTOS.length]; }}
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
@@ -1553,7 +2238,7 @@ function PriceInline({ price, currency, fx, locale }) {
 // ---------------------------------------------------------------------------
 // University landing
 // ---------------------------------------------------------------------------
-function UniversityView({ t, locale, currency, fx, slug, goListing }) {
+function UniversityView({ t, locale, currency, fx, slug, goListing, userLoc }) {
   const [data, setData] = useState(null);
   useEffect(() => {
     setData(null);
@@ -1599,7 +2284,7 @@ function UniversityView({ t, locale, currency, fx, slug, goListing }) {
       <section className="container pb-16">
         <h2 className="font-bold text-[#0a3d54] mb-4">{t('nav.search')}</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {data.listings.map(l => <ListingCard key={l.id} l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />)}
+          {data.listings.map(l => <ListingCard key={l.id} l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} userLoc={userLoc} />)}
         </div>
       </section>
     </div>
@@ -2011,7 +2696,7 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
   );
 }
 
-function SavedView({ t, locale, currency, fx, goListing, auth, setAuthModal }) {
+function SavedView({ t, locale, currency, fx, goListing, auth, setAuthModal, userLoc }) {
   const [items, setItems] = useState(null);
   useEffect(() => {
     if (!auth.signedIn) return;
@@ -2035,7 +2720,7 @@ function SavedView({ t, locale, currency, fx, goListing, auth, setAuthModal }) {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
           {items.map((l) => (
-            <ListingCard key={l.id} l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />
+            <ListingCard key={l.id} l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} userLoc={userLoc} />
           ))}
         </div>
       )}

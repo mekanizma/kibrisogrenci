@@ -1,6 +1,7 @@
 // Scheduled jobs (worker service). Idempotent; logs start/finish/row counts.
 // Requires SUPABASE_SECRET_KEY + NEXT_PUBLIC_SUPABASE_URL in production.
 const { createClient } = require('@supabase/supabase-js');
+const nodemailer = require('nodemailer');
 
 const log = (o) => console.log(JSON.stringify({ ts: new Date().toISOString(), svc: 'worker', ...o }));
 
@@ -19,12 +20,35 @@ async function recordHealth(check_name, status, detail) {
   }
 }
 
+function smtpConfigured() {
+  return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
 async function smtpCanary() {
   log({ job: 'smtp_canary', status: 'start' });
-  // Wire real SMTP later; record canary result for admin health panel.
-  const configured = !!(process.env.SMTP_HOST || process.env.SMTP_URL);
-  await recordHealth('smtp_canary', configured ? 'ok' : 'warn', configured ? 'SMTP configured' : 'SMTP not configured');
-  log({ job: 'smtp_canary', status: 'done', rows: 1 });
+  if (!smtpConfigured()) {
+    await recordHealth('smtp_canary', 'warn', 'SMTP not configured (SMTP_HOST/USER/PASS)');
+    log({ job: 'smtp_canary', status: 'done', detail: 'not_configured' });
+    return;
+  }
+  try {
+    const port = Number(process.env.SMTP_PORT || 587);
+    const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+    const t = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port,
+      secure,
+      requireTLS: !secure && port === 587,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      tls: { minVersion: 'TLSv1.2' },
+    });
+    await t.verify();
+    await recordHealth('smtp_canary', 'ok', `${process.env.SMTP_HOST}:${port}`);
+    log({ job: 'smtp_canary', status: 'done', detail: 'verified' });
+  } catch (e) {
+    await recordHealth('smtp_canary', 'fail', String(e.message || e));
+    log({ job: 'smtp_canary', status: 'error', err: String(e.message || e) });
+  }
 }
 
 async function fxRefresh() {

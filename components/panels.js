@@ -5,10 +5,11 @@ import {
   Plus, Eye, Phone, CreditCard, CheckCircle2, XCircle,
   ShieldAlert, Activity, Building2, Send, Bot,
   BadgeCheck, AlertTriangle, Banknote, X, ImagePlus,
-  Pencil, Trash2,
+  Pencil, Trash2, MapPin, Flag,
 } from 'lucide-react';
 import { api as apiFetch, getAccessToken } from '@/lib/api-client';
 import { createClient } from '@/lib/supabase/client';
+import { nearestCity, requestUserLocation } from '@/lib/geo-client';
 
 const AnalyticsChart = dynamic(() => import('@/components/AnalyticsChart'), {
   ssr: false,
@@ -51,6 +52,7 @@ const EMPTY_FORM = {
   neighbourhood: '',
   address_private: '',
   university_id: '',
+  university_ids: [],
   available_from: '',
   minimum_stay_months: '6',
   phone_e164: '',
@@ -94,11 +96,12 @@ async function uploadListingPhotos(files) {
 }
 
 // ======================= LANDLORD DASHBOARD =======================
-export function DashboardView({ t, locale, config, auth }) {
+export function DashboardView({ t, locale, config, auth, requestLocation, userLoc }) {
   const [tab, setTab] = useState('listings');
   const [data, setData] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [inquiries, setInquiries] = useState(null);
+  const [reports, setReports] = useState(null);
   const [billing, setBilling] = useState(null);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -108,6 +111,7 @@ export function DashboardView({ t, locale, config, auth }) {
   const [photoPreviews, setPhotoPreviews] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
+  const [geoHint, setGeoHint] = useState('');
 
   const load = () => api('my/listings').then(setData);
   useEffect(() => {
@@ -119,6 +123,7 @@ export function DashboardView({ t, locale, config, auth }) {
     if (!auth?.signedIn) return;
     if (tab === 'analytics' && !analytics) api('my/analytics').then(setAnalytics);
     if (tab === 'inquiries' && inquiries == null) api('my/inquiries').then((d) => setInquiries(d.items || []));
+    if (tab === 'reports' && reports == null) api('my/reports').then((d) => setReports(d.items || []));
     if (tab === 'billing' && !billing) api('my/billing').then(setBilling);
   }, [auth?.signedIn, tab]);
 
@@ -128,11 +133,43 @@ export function DashboardView({ t, locale, config, auth }) {
     return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, [photoFiles]);
 
+  useEffect(() => {
+    if (!creating || editingId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        let geo = userLoc;
+        if (!geo?.lat) {
+          geo = requestLocation
+            ? await requestLocation().catch(() => null)
+            : await requestUserLocation().catch(() => null);
+        }
+        if (cancelled || !geo?.lat) return;
+        const city = nearestCity(geo.lat, geo.lng);
+        if (city) {
+          setForm((s) => (s.city === city ? s : { ...s, city }));
+          setGeoHint(city);
+        }
+      } catch {
+        /* permission denied — form still usable */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [creating, editingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setField = (k, v) => setForm((s) => ({ ...s, [k]: v }));
   const toggleAmenity = (key) => {
     setForm((s) => {
       const has = s.amenities.includes(key);
       return { ...s, amenities: has ? s.amenities.filter((a) => a !== key) : [...s.amenities, key] };
+    });
+  };
+  const toggleUniversity = (id) => {
+    setForm((s) => {
+      const cur = Array.isArray(s.university_ids) ? s.university_ids : [];
+      const has = cur.includes(id);
+      const next = has ? cur.filter((x) => x !== id) : [...cur, id];
+      return { ...s, university_ids: next, university_id: next[0] || '' };
     });
   };
 
@@ -165,6 +202,7 @@ export function DashboardView({ t, locale, config, auth }) {
     setForm({ ...EMPTY_FORM });
     setPhotoFiles([]);
     setExistingPhotoKeys([]);
+    setGeoHint('');
   };
 
   const startEdit = async (id) => {
@@ -194,7 +232,10 @@ export function DashboardView({ t, locale, config, auth }) {
         city: it.city || 'Girne',
         neighbourhood: it.neighbourhood || '',
         address_private: it.address_private || '',
-        university_id: it.university_id || '',
+        university_id: (it.university_ids && it.university_ids[0]) || it.university_id || '',
+        university_ids: Array.isArray(it.university_ids)
+          ? it.university_ids
+          : (it.university_id ? [it.university_id] : []),
         available_from: it.available_from ? String(it.available_from).slice(0, 10) : '',
         minimum_stay_months: it.minimum_stay_months != null ? String(it.minimum_stay_months) : '6',
         amenities: it.amenities || [],
@@ -241,7 +282,8 @@ export function DashboardView({ t, locale, config, auth }) {
         size_sqm: form.size_sqm ? Number(form.size_sqm) : null,
         max_occupants: form.max_occupants ? Number(form.max_occupants) : null,
         minimum_stay_months: form.minimum_stay_months ? Number(form.minimum_stay_months) : null,
-        university_id: form.university_id || null,
+        university_id: (form.university_ids && form.university_ids[0]) || form.university_id || null,
+        university_ids: Array.isArray(form.university_ids) ? form.university_ids : [],
         photos,
         draft,
         resubmit: !draft,
@@ -270,7 +312,13 @@ export function DashboardView({ t, locale, config, auth }) {
     );
   }
 
-  const tabs = [['listings', t('dash.my_listings')], ['analytics', t('dash.analytics')], ['inquiries', t('dash.inquiries')], ['billing', t('dash.billing')]];
+  const tabs = [
+    ['listings', t('dash.my_listings')],
+    ['analytics', t('dash.analytics')],
+    ['reports', t('dash.reports')],
+    ['inquiries', t('dash.inquiries')],
+    ['billing', t('dash.billing')],
+  ];
   const selCls = 'w-full h-11 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/30';
   const labelCls = 'text-xs font-semibold text-slate-500 mb-1 block';
   const unis = config?.all_universities || config?.universities || [];
@@ -290,6 +338,22 @@ export function DashboardView({ t, locale, config, auth }) {
             ? 'bg-amber-50 text-amber-800'
             : 'bg-[#dcfce7] text-[#15803d]'
         }`}>{toast}</div>
+      )}
+
+      {data?.verification_status === 'verified' && (
+        <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 flex items-center gap-2">
+          <BadgeCheck className="h-4 w-4 shrink-0" /> {t('admin.verified')} — {t('listing.verified')}
+        </div>
+      )}
+      {data?.verification_status === 'pending' && (
+        <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {t('admin.verify_pending')} · {t('common.verified_soon')}
+        </div>
+      )}
+      {data?.verification_status === 'rejected' && (
+        <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {t('admin.verify_rejected')}
+        </div>
       )}
 
       <div className="flex gap-2 border-b border-slate-200 mb-6 overflow-x-auto">
@@ -333,12 +397,32 @@ export function DashboardView({ t, locale, config, auth }) {
                         {['apartment', 'studio', 'room', 'house'].map((p) => <option key={p} value={p}>{t(`ptype.${p}`)}</option>)}
                       </select>
                     </div>
-                    <div>
-                      <label className={labelCls}>{t('dash.field_university')}</label>
-                      <select className={selCls} value={form.university_id} onChange={(e) => setField('university_id', e.target.value)}>
-                        <option value="">{t('search.any_university')}</option>
-                        {unis.map((u) => <option key={u.id} value={u.id}>{u.name_tr || u.name_en || u.slug}</option>)}
-                      </select>
+                    <div className="sm:col-span-2">
+                      <label className={labelCls}>{t('dash.field_universities')}</label>
+                      <p className="text-[11px] text-slate-400 mb-2">{t('dash.field_universities_hint')}</p>
+                      <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-[#f8fafb] p-2.5">
+                        {unis.map((u) => {
+                          const selected = (form.university_ids || []).includes(u.id);
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => toggleUniversity(u.id)}
+                              className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1.5 text-left text-xs font-semibold transition-colors ${selected ? 'border-[#0a4d68] bg-[#0a4d68] text-white' : 'border-slate-200 bg-white text-[#0a3d54] hover:border-[#0a4d68]/40'}`}
+                            >
+                              <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold ${selected ? 'bg-white/20' : 'bg-[#0a4d68]/10 text-[#0a4d68]'}`}>
+                                {u.short || '—'}
+                              </span>
+                              <span className="truncate">{locale === 'tr' ? (u.name_tr || u.name_en) : (u.name_en || u.name_tr)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {(form.university_ids || []).length > 0 && (
+                        <div className="mt-1.5 text-[11px] text-slate-500">
+                          {(form.university_ids || []).length} {t('dash.universities_selected')}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <label className={labelCls}>{t('dash.field_bedrooms')}</label>
@@ -419,8 +503,16 @@ export function DashboardView({ t, locale, config, auth }) {
                     <div>
                       <label className={labelCls}>{t('dash.field_city')} *</label>
                       <select className={selCls} value={form.city} onChange={(e) => setField('city', e.target.value)}>
-                        {cities.map((c) => <option key={c} value={c}>{c}</option>)}
+                        {cities.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
                       </select>
+                      {geoHint && (
+                        <p className="mt-1.5 flex items-center gap-1 text-xs text-[#0a4d68]">
+                          <MapPin className="h-3.5 w-3.5 shrink-0" />
+                          {t('geo.suggest_city')}: {geoHint}
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className={labelCls}>{t('dash.field_neighbourhood')} *</label>
@@ -519,16 +611,34 @@ export function DashboardView({ t, locale, config, auth }) {
                         {l.rejection_reason}
                       </div>
                     )}
-                    <div className="flex sm:hidden items-center gap-3 text-xs text-slate-500 mt-1">
-                      <span className="flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {l.view_count ?? 0}</span>
-                      <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {l.contact_reveal_count ?? 0}</span>
+                    <div className="flex sm:hidden items-center gap-3 text-xs text-slate-500 mt-1 flex-wrap">
+                      <span className="flex items-center gap-1" title={t('dash.views')}>
+                        <Eye className="h-3.5 w-3.5" /> {l.view_count ?? 0} {t('dash.views')}
+                      </span>
+                      <span className="flex items-center gap-1" title={t('dash.reveals')}>
+                        <Phone className="h-3.5 w-3.5" /> {l.contact_reveal_count ?? 0}
+                      </span>
+                      {(l.open_reports > 0 || l.report_count > 0) && (
+                        <span className="flex items-center gap-1 text-amber-700 font-semibold">
+                          <Flag className="h-3.5 w-3.5" /> {l.open_reports || l.report_count} {t('dash.reports')}
+                        </span>
+                      )}
                       <StatusPill s={l.status} t={t} />
                     </div>
                   </div>
                 </div>
                 <div className="hidden sm:flex items-center gap-4 text-xs text-slate-500">
-                  <span className="flex items-center gap-1"><Eye className="h-4 w-4" /> {l.view_count ?? 0}</span>
-                  <span className="flex items-center gap-1"><Phone className="h-4 w-4" /> {l.contact_reveal_count ?? 0}</span>
+                  <span className="flex items-center gap-1 font-medium text-slate-700" title={t('dash.views')}>
+                    <Eye className="h-4 w-4" /> {l.view_count ?? 0}
+                  </span>
+                  <span className="flex items-center gap-1" title={t('dash.reveals')}>
+                    <Phone className="h-4 w-4" /> {l.contact_reveal_count ?? 0}
+                  </span>
+                  {(l.open_reports > 0 || l.report_count > 0) && (
+                    <span className="flex items-center gap-1 text-amber-700 font-semibold" title={t('dash.reports')}>
+                      <Flag className="h-4 w-4" /> {l.open_reports || l.report_count}
+                    </span>
+                  )}
                 </div>
                 <div className="hidden sm:block"><StatusPill s={l.status} t={t} /></div>
                 <div className="flex gap-2 shrink-0">
@@ -549,9 +659,82 @@ export function DashboardView({ t, locale, config, auth }) {
       )}
 
       {tab === 'analytics' && analytics && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <h3 className="font-bold text-[#0a3d54] mb-4">{t('dash.analytics')} · {t('dash.views')} / {t('dash.reveals')}</h3>
-          <AnalyticsChart data={analytics.trend || []} />
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              [t('dash.views'), analytics.totals?.views ?? 0],
+              [t('dash.reveals'), analytics.totals?.reveals ?? 0],
+              [t('dash.reports_open'), analytics.totals?.reports_open ?? 0],
+              [t('dash.my_listings'), analytics.totals?.listings ?? 0],
+            ].map(([label, val]) => (
+              <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{label}</div>
+                <div className="text-2xl font-bold text-[#0a3d54] mt-1 tabular-nums">{val}</div>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <h3 className="font-bold text-[#0a3d54] mb-4">{t('dash.analytics')} · {t('dash.views')} / {t('dash.reveals')}</h3>
+            <AnalyticsChart data={analytics.trend || []} />
+          </div>
+          {(analytics.listings || []).length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-100 text-sm font-bold text-[#0a3d54]">{t('dash.per_listing')}</div>
+              <ul className="divide-y divide-slate-100">
+                {analytics.listings.map((l) => (
+                  <li key={l.id} className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-800 truncate">{l.title}</div>
+                      <div className="text-xs text-slate-400">#{l.reference_code}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-xs text-slate-600">
+                      <span className="inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {l.view_count} {t('dash.views')}</span>
+                      <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {l.contact_reveal_count} {t('dash.reveals')}</span>
+                      <span className={`inline-flex items-center gap-1 ${l.open_reports ? 'text-amber-700 font-semibold' : ''}`}>
+                        <Flag className="h-3.5 w-3.5" /> {l.open_reports} {t('dash.reports')}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'reports' && (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">{t('dash.reports_hint')}</p>
+          {(reports || []).map((r) => (
+            <div key={r.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-800 truncate">
+                    {r.title || r.ref} <span className="text-xs text-slate-400 font-normal">· #{r.ref}</span>
+                  </div>
+                  <div className="text-sm text-amber-800 font-medium mt-1">
+                    {t(`report.reasons.${r.reason}`) !== `report.reasons.${r.reason}`
+                      ? t(`report.reasons.${r.reason}`)
+                      : r.reason}
+                    {r.count > 1 ? ` · ×${r.count}` : ''}
+                  </div>
+                  {r.detail && <p className="text-sm text-slate-600 mt-1 whitespace-pre-wrap">{r.detail}</p>}
+                  {r.created_at && (
+                    <div className="text-[11px] text-slate-400 mt-2">
+                      {new Date(r.created_at).toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}
+                    </div>
+                  )}
+                </div>
+                <span className={`shrink-0 text-xs rounded-full px-2.5 py-1 font-semibold ${
+                  r.status === 'open' ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {r.status === 'open' ? t('dash.report_open') : t('dash.report_resolved')}
+                </span>
+              </div>
+            </div>
+          ))}
+          {reports && reports.length === 0 && <p className="text-slate-400 text-center py-10">{t('dash.reports_empty')}</p>}
+          {reports == null && <p className="text-slate-400 text-center py-10">{t('common.loading')}</p>}
         </div>
       )}
 
@@ -904,34 +1087,136 @@ export function AdminView({ t, locale, auth }) {
 
       {tab === 'reports' && (
         <div className="space-y-3">
-          {(d.reports || []).map(r => (
-            <div key={r.id} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4">
-              <div>
-                <div className="font-semibold text-slate-800">{r.ref} · {r.reason} <span className="text-xs text-slate-400">×{r.count}</span></div>
-                <div className="text-sm text-slate-500">{r.detail}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs rounded-full px-2 py-0.5 font-semibold ${r.status === 'open' ? 'bg-amber-50 text-amber-700' : 'bg-[#dcfce7] text-[#15803d]'}`}>{r.status}</span>
-                {r.status === 'open' && <button onClick={() => act('admin/reports/resolve', { id: r.id, listing_id: r.listing_id, action: 'unpublish' }, 'reports')} className="h-9 rounded-lg bg-[#0a4d68] px-3 text-white text-sm font-semibold">{t('admin.unpublish')}</button>}
+          <p className="text-sm text-slate-500 mb-1">{t('admin.reports_hint')}</p>
+          {(d.reports || []).map((r) => (
+            <div key={r.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-col lg:flex-row lg:items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-slate-800">
+                    {r.title || r.ref}
+                    <span className="text-xs text-slate-400 font-normal"> · #{r.ref}</span>
+                    {r.count > 1 && <span className="ms-2 text-xs text-amber-700 font-bold">×{r.count}</span>}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap gap-x-2">
+                    {r.owner && <span>{r.owner}</span>}
+                    {r.city && <span>· {r.city}</span>}
+                    {r.listing_status && <span>· {r.listing_status}</span>}
+                    {r.created_at && (
+                      <span>· {new Date(r.created_at).toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}</span>
+                    )}
+                  </div>
+                  <div className="text-sm font-medium text-amber-900 mt-2">
+                    {t(`report.reasons.${r.reason}`) !== `report.reasons.${r.reason}`
+                      ? t(`report.reasons.${r.reason}`)
+                      : r.reason}
+                  </div>
+                  {r.detail && <p className="text-sm text-slate-600 mt-1 whitespace-pre-wrap">{r.detail}</p>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <span className={`text-xs rounded-full px-2.5 py-1 font-semibold ${
+                    r.status === 'open' ? 'bg-amber-50 text-amber-800' : 'bg-[#dcfce7] text-[#15803d]'
+                  }`}>
+                    {r.status === 'open' ? t('dash.report_open') : t('dash.report_resolved')}
+                  </span>
+                  {r.listing_id && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(r.listing_id)}
+                      className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700"
+                    >
+                      {t('admin.open_detail')}
+                    </button>
+                  )}
+                  {r.status === 'open' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => act('admin/reports/resolve', { id: r.id, listing_id: r.listing_id, action: 'dismiss' }, 'reports')}
+                        className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-semibold"
+                      >
+                        {t('admin.dismiss_report')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => act('admin/reports/resolve', { id: r.id, listing_id: r.listing_id, action: 'unpublish' }, 'reports')}
+                        className="h-9 rounded-lg bg-[#0a4d68] px-3 text-white text-sm font-semibold"
+                      >
+                        {t('admin.unpublish')}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           ))}
+          {!(d.reports || []).length && <p className="text-sm text-slate-400 py-8 text-center">{t('admin.no_items')}</p>}
         </div>
       )}
 
       {tab === 'users' && (
         <div className="space-y-2">
           {(d.users || []).map(u => (
-            <div key={u.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3">
-              <div><span className="font-semibold text-slate-800">{u.name}</span> <span className="text-xs text-slate-400">· {u.role} · {u.email}</span></div>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs rounded-full px-2 py-0.5 font-semibold ${u.status === 'active' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-red-50 text-red-600'}`}>{u.status}</span>
-                {u.role !== 'admin' && (u.status === 'active'
-                  ? <button onClick={() => act('admin/users/status', { id: u.id, status: 'suspended' }, 'users')} className="h-8 rounded-lg border border-slate-200 px-3 text-sm">{t('admin.suspend')}</button>
-                  : <button onClick={() => act('admin/users/status', { id: u.id, status: 'active' }, 'users')} className="h-8 rounded-lg border border-slate-200 px-3 text-sm">{t('admin.restore')}</button>)}
+            <div key={u.id} className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-800 truncate">{u.name || '—'}</div>
+                  <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap gap-x-2 gap-y-1">
+                    <span>{u.role}</span>
+                    {u.verification_status && (
+                      <span className={
+                        u.verification_status === 'verified' ? 'text-emerald-700 font-semibold'
+                          : u.verification_status === 'pending' ? 'text-amber-700 font-semibold'
+                            : u.verification_status === 'rejected' ? 'text-red-600 font-semibold'
+                              : ''
+                      }>
+                        · {u.verification_status === 'verified' ? t('admin.verified')
+                          : u.verification_status === 'pending' ? t('admin.verify_pending')
+                            : u.verification_status === 'rejected' ? t('admin.verify_rejected')
+                              : u.verification_status}
+                      </span>
+                    )}
+                  </div>
+                  {u.verification_note && (
+                    <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{u.verification_note}</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <span className={`text-xs rounded-full px-2 py-0.5 font-semibold ${u.status === 'active' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-red-50 text-red-600'}`}>{u.status}</span>
+                  {u.role === 'landlord' && u.landlord_id && u.verification_status !== 'verified' && (
+                    <button
+                      type="button"
+                      onClick={() => act('admin/landlords/verify', { landlord_id: u.landlord_id, user_id: u.id, status: 'verified' }, 'users')}
+                      className="h-8 rounded-lg bg-[#15803d] px-3 text-white text-sm font-semibold inline-flex items-center gap-1"
+                    >
+                      <BadgeCheck className="h-3.5 w-3.5" /> {t('admin.verify_landlord')}
+                    </button>
+                  )}
+                  {u.role === 'landlord' && u.landlord_id && u.verification_status === 'pending' && (
+                    <button
+                      type="button"
+                      onClick={() => act('admin/landlords/verify', { landlord_id: u.landlord_id, user_id: u.id, status: 'rejected' }, 'users')}
+                      className="h-8 rounded-lg border border-red-200 text-red-700 px-3 text-sm font-semibold"
+                    >
+                      {t('admin.reject_verify')}
+                    </button>
+                  )}
+                  {u.role === 'landlord' && u.landlord_id && u.verification_status === 'verified' && (
+                    <button
+                      type="button"
+                      onClick={() => act('admin/landlords/verify', { landlord_id: u.landlord_id, user_id: u.id, status: 'unverified' }, 'users')}
+                      className="h-8 rounded-lg border border-slate-200 px-3 text-sm"
+                    >
+                      {t('admin.revoke_verify')}
+                    </button>
+                  )}
+                  {u.role !== 'admin' && (u.status === 'active'
+                    ? <button onClick={() => act('admin/users/status', { id: u.id, status: 'suspended' }, 'users')} className="h-8 rounded-lg border border-slate-200 px-3 text-sm">{t('admin.suspend')}</button>
+                    : <button onClick={() => act('admin/users/status', { id: u.id, status: 'active' }, 'users')} className="h-8 rounded-lg border border-slate-200 px-3 text-sm">{t('admin.restore')}</button>)}
+                </div>
               </div>
             </div>
           ))}
+          {!(d.users || []).length && <p className="text-sm text-slate-400 py-6 text-center">{t('admin.no_items')}</p>}
         </div>
       )}
 
