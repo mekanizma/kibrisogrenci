@@ -66,6 +66,7 @@ venv/
 .env.local
 .env*.local
 !.env.example
+coolify.env
 *token.json*
 *credentials.json*
 credentials.json
@@ -74,3 +75,6 @@ credentials.json
 
 # Local helper
 .gitconfig
+_part*.sql
+_m1.txt
+

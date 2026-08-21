@@ -1,31 +1,38 @@
-# Production deploy notes — Coolify + Supabase
+# Production deploy — Coolify + Supabase (cloud)
 
-## Migrations (run once on Supabase SQL editor, in order)
-1. `supabase/migrations/0001_init.sql`
-2. `supabase/migrations/0002_seed.sql`
-3. `supabase/migrations/0003_security_hardening.sql`
+## Already done (by agent)
+- Supabase project `kibrisogrenci` created (`gglvjbajtthsczofgjdz`, eu-west-1)
+- Extensions: postgis, unaccent, pg_trgm, pgcrypto
+- Schema + RLS + security RPCs + storage buckets
+- Seed: 7 universities (6 verified), 3 packages, FX rates
+- Repo pushed to https://github.com/mekanizma/kibrisogrenci
 
-Verify RLS:
-```sql
-select tablename from pg_tables where schemaname='public' and not rowsecurity;
-```
-Must return 0 rows.
+## You still need (cannot be automated without your dashboard login)
 
-## First admin user
-1. Sign up via the website.
-2. In Supabase SQL:
-```sql
-update profiles set role = 'admin' where id = '<user-uuid>';
--- and set JWT claim (Auth → Users → user → App Metadata):
--- { "role": "admin" }
-```
-Or via service role:
-```sql
--- after profiles update, refresh session / re-login
-```
+### 1) Service role key → Coolify
+Open: https://supabase.com/dashboard/project/gglvjbajtthsczofgjdz/settings/api  
+Copy **service_role** → set `SUPABASE_SECRET_KEY` in Coolify (and in local `coolify.env`).
 
-## Coolify
-- Resource type: Docker Compose (`docker-compose.yml`)
-- Domain → `web` service
-- Set all vars from `.env.example`
-- Build args must include `NEXT_PUBLIC_*` (compose already passes them)
+Use values from `.env.example` for the rest.
+
+### 2) Auth URL configuration
+Open: https://supabase.com/dashboard/project/gglvjbajtthsczofgjdz/auth/url-configuration  
+- Site URL: `https://kibrisogrenci.com`  
+- Redirect URLs: `https://kibrisogrenci.com/**`  
+(Optional local: `http://localhost:3000/**`)
+
+### 3) First admin
+1. Deploy / open site → Sign up with your email  
+2. Run `supabase/scripts/make_admin.sql` (replace YOUR_EMAIL) in SQL Editor  
+3. User → App Metadata: `{ "role": "admin" }` → re-login
+
+### 4) Coolify
+- Docker Compose from GitHub `mekanizma/kibrisogrenci`
+- Domain → `web`
+- Paste env from `.env.example` (+ service_role)
+- Ensure build args include `NEXT_PUBLIC_*`
+
+### 5) Optional
+- Replace `public/logo.svg` / `hero.jpg` with real assets  
+- `BANK_IBAN`  
+- WhatsApp tokens when ready
