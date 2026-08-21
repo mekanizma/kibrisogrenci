@@ -378,7 +378,7 @@ backend:
 frontend:
   - task: "Public marketplace UI (home/search/listing/university), TR/EN, currency toggle, gated reveal"
     implemented: true
-    working: "NA"
+    working: true
     file: "app/page.js"
     stuck_count: 0
     priority: "high"
@@ -387,12 +387,15 @@ frontend:
         -working: "NA"
         -agent: "main"
         -comment: "Verified manually via screenshots: home, featured cards, listing detail (cost breakdown, price index, walking distance, price history chart, gated contact, scam banner, approx map). Not yet sent to frontend testing agent (awaiting user permission)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ RESPONSIVE LAYOUT BUG FIX VERIFIED - ALL TESTS PASSED. Comprehensive testing completed across 5 viewport widths (360x800, 390x844, 768x1024, 1280x800, 1920x800). CRITICAL FIX CONFIRMED: NO horizontal overflow at any width (scrollWidth = clientWidth at all sizes). Mobile header: hamburger menu, currency dropdown, language dropdown all working correctly, menu opens/closes properly with all nav links. Hero search box: fully within viewport at 390 and 768, no clipping. Desktop nav: all 5 language buttons (TR EN RU FR AR) visible, sign-in button visible, no overflow, search page renders correctly with filters sidebar at 1280. Arabic RTL: document.dir='rtl' confirmed, no overflow in RTL mode at 390 and 1280. Listing detail: gallery, cost breakdown, contact section all render correctly with no overflow at 390 and 1280. The reported bugs (horizontal overflow, header controls overflow on mobile, hero search box overflow) have been successfully fixed."
 
 metadata:
   created_by: "main_agent"
-  version: "1.0"
-  test_sequence: 1
-  run_ui: false
+  version: "1.2"
+  test_sequence: 3
+  run_ui: true
 
 test_plan:
   current_focus: []
@@ -418,3 +421,5 @@ agent_communication:
     -message: "✅ ALL BACKEND TESTS PASSED (7/7 test groups). Comprehensive testing completed for all API endpoints. CRITICAL CONTACT GATING verified: NO phone numbers or exact coordinates in listings/detail responses. Phone numbers only revealed via POST /api/reveal with proper auth. Rate limiting working (15 requests OK, 16th returns 429). METU exclusion verified in /api/config. All filters, sorting, and error handling working correctly. Backend is production-ready."
     -agent: "testing"
     -message: "✅ ROUND 2 COMPLETE - ALL TESTS PASSED (5/5 test groups). Tested all Slice 2/4 endpoints + WhatsApp webhook. (A) WhatsApp webhook security: ✅ POST with invalid signature returns 403, GET with wrong token returns 403. (B) WhatsApp sim: ✅ Student flow returns cards (5 items), landlord flow returns summary with extracted fields. (C) Landlord dashboard: ✅ All 5 endpoints working (my/listings GET/POST, my/analytics, my/inquiries, my/billing). POST creates listing with status 'pending_review'. (D) Admin: ✅ All 8 endpoints working (queue with priority+risk_flags, health with 4 checks, invoices/pay, audit with invoice.mark_paid entry, coords/verify, users, reports, invoices). (E) Regression: ✅ Contact gating verified (no phone/coords in listings/detail), rate limiting verified (16th request returns 429). Backend fully functional."
+    -agent: "testing"
+    -message: "✅ RESPONSIVE LAYOUT BUG FIX VERIFICATION COMPLETE - ALL TESTS PASSED (6/6 test groups). Tested across 5 viewport widths (360x800, 390x844, 768x1024, 1280x800, 1920x800). (1) HORIZONTAL OVERFLOW: ✅ NO overflow at any width - scrollWidth=clientWidth at all sizes (360=360, 390=390, 768=768, 1280=1280, 1920=1920). (2) MOBILE HEADER (360, 390): ✅ Desktop nav hidden, hamburger menu visible and functional, currency dropdown visible, language dropdown visible, menu opens/closes correctly with all 6 nav links + sign-in button. (3) HERO SEARCH BOX (390, 768): ✅ Fully within viewport at both sizes, no clipping or overflow. (4) DESKTOP NAV (1280, 1920): ✅ Full nav links visible, 5 language buttons (TR EN RU FR AR) visible, sign-in button visible, hamburger hidden, no overflow. Search page renders correctly with filters sidebar and results grid at 1280. (5) ARABIC RTL (390, 1280): ✅ document.dir='rtl' confirmed, no overflow in RTL mode at both widths. (6) LISTING DETAIL (390, 1280): ✅ Gallery, cost breakdown, contact section all render correctly with no overflow. The reported bugs (horizontal overflow, header controls overflow on mobile, hero search box overflow) have been successfully fixed. UI is production-ready."

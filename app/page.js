@@ -248,7 +248,7 @@ export default function App() {
     auth, setAuth, setAuthModal, setReportModal };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-800">
+    <div className="min-h-screen bg-[#f8fafc] text-slate-800 overflow-x-hidden">
       <Header {...shared} locale={locale} setLocale={setLocale} currency={currency} setCurrency={setCurrency}
         setView={setView} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
 
@@ -280,33 +280,40 @@ export default function App() {
 // ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
-function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, setAuth, setAuthModal, config }) {
+function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, setAuth, setAuthModal, config, menuOpen, setMenuOpen }) {
+  const go = (v) => { setView(v); setMenuOpen(false); };
+  const navItems = [
+    ['search', () => go({ name: 'search', filters: {} })],
+    ['how', () => go({ name: 'how' })],
+    ['scam', () => go({ name: 'scam' })],
+    ['dashboard', () => go({ name: 'dashboard' })],
+    ['admin', () => go({ name: 'admin' })],
+    ['whatsapp', () => go({ name: 'whatsapp' })],
+  ];
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
-      <div className="container flex items-center justify-between h-16 gap-3">
-        <button onClick={() => setView({ name: 'home' })} className="flex items-center gap-2.5 shrink-0">
-          <img src="/logo.png" alt={t('brand')} className="h-11 w-11 object-contain" />
-          <div className="text-start leading-none">
-            <div className="font-bold text-[#0a3d54] text-lg">{t('brand')}</div>
-            <div className="text-[10px] text-slate-500 hidden sm:block">{t('tagline')}</div>
+      <div className="container flex items-center justify-between h-16 gap-2">
+        <button onClick={() => go({ name: 'home' })} className="flex items-center gap-2 shrink-0 min-w-0">
+          <img src="/logo.png" alt={t('brand')} className="h-10 w-10 object-contain shrink-0" />
+          <div className="text-start leading-none min-w-0">
+            <div className="font-bold text-[#0a3d54] text-base sm:text-lg truncate">{t('brand')}</div>
+            <div className="text-[10px] text-slate-500 hidden md:block truncate">{t('tagline')}</div>
           </div>
         </button>
 
         <nav className="hidden lg:flex items-center gap-5 text-sm font-medium text-slate-600">
-          <button onClick={() => setView({ name: 'search', filters: {} })} className="hover:text-[#0a4d68]">{t('nav.search')}</button>
-          <button onClick={() => setView({ name: 'how' })} className="hover:text-[#0a4d68]">{t('nav.how')}</button>
-          <button onClick={() => setView({ name: 'scam' })} className="hover:text-[#0a4d68]">{t('nav.scam')}</button>
-          <button onClick={() => setView({ name: 'dashboard' })} className="hover:text-[#0a4d68]">{t('nav.dashboard')}</button>
-          <button onClick={() => setView({ name: 'admin' })} className="hover:text-[#0a4d68]">{t('nav.admin')}</button>
-          <button onClick={() => setView({ name: 'whatsapp' })} className="hover:text-[#0a4d68]">{t('nav.whatsapp')}</button>
+          {navItems.map(([k, fn]) => (
+            <button key={k} onClick={fn} className="hover:text-[#0a4d68] whitespace-nowrap">{t(`nav.${k}`)}</button>
+          ))}
         </nav>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
           <select value={currency} onChange={e => setCurrency(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm font-medium text-slate-600 focus:ring-2 focus:ring-[#0a4d68]/30 outline-none">
+            className="h-9 rounded-lg border border-slate-200 bg-white px-1.5 text-xs font-medium text-slate-600 focus:ring-2 focus:ring-[#0a4d68]/30 outline-none">
             {(config?.currencies || ['TRY', 'GBP', 'USD', 'EUR']).map(c => <option key={c} value={c}>{SYMBOL[c]} {c}</option>)}
           </select>
-          <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+          {/* language: buttons on desktop, dropdown on mobile */}
+          <div className="hidden md:flex rounded-lg border border-slate-200 overflow-hidden">
             {LOCALES.map(l => (
               <button key={l} onClick={() => setLocale(l)}
                 className={`px-2 h-9 text-xs font-semibold ${locale === l ? 'bg-[#0a4d68] text-white' : 'bg-white text-slate-500'}`}>
@@ -314,19 +321,42 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
               </button>
             ))}
           </div>
+          <select value={locale} onChange={e => setLocale(e.target.value)}
+            className="md:hidden h-9 rounded-lg border border-slate-200 bg-white px-1.5 text-xs font-semibold text-slate-600 outline-none">
+            {LOCALES.map(l => <option key={l} value={l}>{LOCALE_LABEL[l]}</option>)}
+          </select>
           {auth.signedIn ? (
             <button onClick={() => setAuth({ signedIn: false })}
-              className="hidden sm:inline-flex h-9 items-center rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100">
+              className="hidden md:inline-flex h-9 items-center rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100">
               {t('nav.signout')}
             </button>
           ) : (
             <button onClick={() => setAuthModal(true)}
-              className="inline-flex h-9 items-center rounded-lg bg-[#0a4d68] px-3.5 text-sm font-semibold text-white hover:bg-[#08415c]">
+              className="hidden md:inline-flex h-9 items-center rounded-lg bg-[#0a4d68] px-3.5 text-sm font-semibold text-white hover:bg-[#08415c]">
               {t('nav.signin')}
             </button>
           )}
+          <button onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden h-9 w-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-600">
+            {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
         </div>
       </div>
+
+      {/* mobile menu */}
+      {menuOpen && (
+        <div className="lg:hidden border-t border-slate-200 bg-white">
+          <nav className="container py-3 flex flex-col gap-1">
+            {navItems.map(([k, fn]) => (
+              <button key={k} onClick={fn} className="text-start py-2.5 px-2 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50">{t(`nav.${k}`)}</button>
+            ))}
+            {auth.signedIn ? (
+              <button onClick={() => { setAuth({ signedIn: false }); setMenuOpen(false); }} className="text-start py-2.5 px-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50">{t('nav.signout')}</button>
+            ) : (
+              <button onClick={() => { setAuthModal(true); setMenuOpen(false); }} className="mt-1 h-11 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('nav.signin')}</button>
+            )}
+          </nav>
+        </div>
+      )}
     </header>
   );
 }
@@ -366,18 +396,18 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
             <p className="mt-4 text-white/85 text-base md:text-lg leading-relaxed">{t('hero.subtitle')}</p>
 
             {/* Search box */}
-            <div className="mt-8 bg-white rounded-2xl p-3 shadow-xl grid grid-cols-1 sm:grid-cols-[1.3fr_1fr_1fr_auto] gap-2">
+            <div className="mt-8 bg-white rounded-2xl p-3 shadow-xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_auto] gap-2">
               <select value={uni} onChange={e => setUni(e.target.value)}
-                className="h-12 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30">
+                className="h-12 w-full min-w-0 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30">
                 <option value="">{t('search.any_university')}</option>
                 {unis.map(u => <option key={u.id} value={u.id}>{u.short} — {locale === 'tr' ? u.name_tr : u.name_en}</option>)}
               </select>
               <input type="number" value={budget} onChange={e => setBudget(e.target.value)} placeholder={`${t('search.budget')} (${SYMBOL[currency]})`}
-                className="h-12 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
+                className="h-12 w-full min-w-0 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
               <input type="date" value={movein} onChange={e => setMovein(e.target.value)}
-                className="h-12 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
+                className="h-12 w-full min-w-0 rounded-xl border border-slate-200 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
               <button onClick={() => goSearch({ university: uni, price_max_display: budget ? convertMoney(Number(budget), currency, 'GBP', fx) : '', movein })}
-                className="h-12 rounded-xl bg-[#e0a256] hover:bg-[#d4923f] px-6 font-semibold text-[#3a2606] inline-flex items-center justify-center gap-2">
+                className="h-12 w-full min-w-0 rounded-xl bg-[#e0a256] hover:bg-[#d4923f] px-6 font-semibold text-[#3a2606] inline-flex items-center justify-center gap-2 sm:col-span-2 lg:col-span-1">
                 <Search className="h-5 w-5" /> {t('search.button')}
               </button>
             </div>
