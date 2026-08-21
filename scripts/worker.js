@@ -1,0 +1,91 @@
+// Scheduled jobs (worker service). Idempotent; logs start/finish/row counts.
+// Requires SUPABASE_SECRET_KEY + NEXT_PUBLIC_SUPABASE_URL in production.
+const { createClient } = require('@supabase/supabase-js');
+
+const log = (o) => console.log(JSON.stringify({ ts: new Date().toISOString(), svc: 'worker', ...o }));
+
+function admin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!url || !key) throw new Error('missing supabase admin env');
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+async function recordHealth(check_name, status, detail) {
+  try {
+    await admin().from('system_health').insert({ check_name, status, detail });
+  } catch (e) {
+    log({ job: 'health_write', status: 'error', err: String(e.message || e) });
+  }
+}
+
+async function smtpCanary() {
+  log({ job: 'smtp_canary', status: 'start' });
+  // Wire real SMTP later; record canary result for admin health panel.
+  const configured = !!(process.env.SMTP_HOST || process.env.SMTP_URL);
+  await recordHealth('smtp_canary', configured ? 'ok' : 'warn', configured ? 'SMTP configured' : 'SMTP not configured');
+  log({ job: 'smtp_canary', status: 'done', rows: 1 });
+}
+
+async function fxRefresh() {
+  log({ job: 'fx_refresh', status: 'start' });
+  try {
+    const res = await fetch('https://api.frankfurter.app/latest?from=GBP&to=TRY,USD,EUR');
+    if (!res.ok) throw new Error(`fx http ${res.status}`);
+    const body = await res.json();
+    const date = body.date || new Date().toISOString().slice(0, 10);
+    const rows = Object.entries(body.rates || {}).map(([quote, rate]) => ({
+      base_currency: 'GBP',
+      quote_currency: quote,
+      rate,
+      rate_date: date,
+      fetched_at: new Date().toISOString(),
+    }));
+    if (rows.length) {
+      await admin().from('fx_rates').upsert(rows, { onConflict: 'base_currency,quote_currency,rate_date' });
+    }
+    await recordHealth('fx_rates', 'ok', `updated ${rows.length} rates`);
+    log({ job: 'fx_refresh', status: 'done', rows: rows.length });
+  } catch (e) {
+    await recordHealth('fx_rates', 'fail', String(e.message || e));
+    log({ job: 'fx_refresh', status: 'error', err: String(e.message || e) });
+  }
+}
+
+async function expireListings() {
+  log({ job: 'expire_listings', status: 'start' });
+  try {
+    const cutoff = new Date(Date.now() - 21 * 86400000).toISOString();
+    const { data, error } = await admin()
+      .from('listings')
+      .update({ status: 'expired' })
+      .eq('status', 'published')
+      .lt('last_confirmed_available_at', cutoff)
+      .select('id');
+    if (error) throw error;
+    log({ job: 'expire_listings', status: 'done', rows: (data || []).length });
+  } catch (e) {
+    log({ job: 'expire_listings', status: 'error', err: String(e.message || e) });
+  }
+}
+
+async function recalcPriceIndex() {
+  log({ job: 'recalc_price_index', status: 'start' });
+  // Full spatial median recalc is SQL-heavy; placeholder keeps job wired.
+  await recordHealth('price_index', 'ok', 'recalc stub — run SQL job when sample>=5');
+  log({ job: 'recalc_price_index', status: 'done', rows: 0 });
+}
+
+const MIN = 60 * 1000;
+setInterval(() => smtpCanary().catch((e) => log({ job: 'smtp_canary', status: 'error', err: String(e) })), 15 * MIN);
+setInterval(() => {
+  fxRefresh();
+  expireListings();
+  recalcPriceIndex();
+}, 24 * 60 * MIN);
+
+log({ status: 'started' });
+smtpCanary();
+fxRefresh();
+expireListings();
+recalcPriceIndex();
