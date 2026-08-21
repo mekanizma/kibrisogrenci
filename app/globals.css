@@ -47,12 +47,10 @@
     font-family: var(--font-sans), system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: var(--ko-paper);
+    background-color: #f6f4f0;
     background-image:
-      radial-gradient(1100px 520px at 8% -8%, rgba(10, 77, 104, 0.10), transparent 58%),
-      radial-gradient(900px 420px at 100% 0%, rgba(224, 162, 86, 0.09), transparent 52%),
-      linear-gradient(180deg, #f7fafc 0%, #f1f5f8 100%);
-    background-attachment: fixed;
+      radial-gradient(900px 480px at 0% -10%, rgba(10, 77, 104, 0.07), transparent 55%),
+      radial-gradient(700px 380px at 100% 8%, rgba(224, 162, 86, 0.08), transparent 50%);
   }
 
   h1, h2, .ko-display {
@@ -85,14 +83,227 @@
   }
 
   .ko-card {
-    @apply rounded-2xl border bg-white overflow-hidden transition-all duration-300;
-    border-color: rgba(10, 61, 84, 0.1);
+    @apply rounded-3xl bg-white overflow-hidden transition-all duration-500;
+    border: 1px solid rgba(10, 61, 84, 0.08);
+    box-shadow: 0 1px 2px rgba(10, 61, 84, 0.04);
   }
 
   .ko-card:hover {
-    border-color: rgba(10, 77, 104, 0.28);
-    box-shadow: 0 18px 40px -24px rgba(10, 61, 84, 0.35);
-    transform: translateY(-2px);
+    border-color: rgba(10, 77, 104, 0.16);
+    box-shadow: 0 22px 50px -28px rgba(10, 61, 84, 0.38);
+    transform: translateY(-4px);
+  }
+
+  .ko-listing {
+    @apply w-full text-start;
+  }
+
+  /* Uiverse-style listing card (adapted for housing) */
+  .ko-uicard {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    width: 100%;
+    min-height: 22rem;
+    border-radius: 20px;
+    overflow: hidden;
+    background-color: #fff;
+    box-shadow: 10px 10px 0 rgba(10, 61, 84, 0.08);
+    border: 1px solid rgba(10, 61, 84, 0.08);
+    text-align: start;
+    transition: transform 0.35s ease, box-shadow 0.35s ease;
+    cursor: pointer;
+  }
+
+  .ko-uicard:hover {
+    transform: translateY(-4px);
+    box-shadow: 12px 14px 0 rgba(10, 61, 84, 0.12);
+  }
+
+  .ko-uicard:focus-visible {
+    outline: 2px solid #0a4d68;
+    outline-offset: 3px;
+  }
+
+  .ko-uicard-media {
+    position: relative;
+    width: 100%;
+    height: 58%;
+    min-height: 11.5rem;
+    overflow: hidden;
+    background: #dce8ee;
+  }
+
+  .ko-uicard-filter {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      rgba(4, 24, 32, 0.35) 0%,
+      rgba(4, 24, 32, 0.05) 42%,
+      rgba(4, 24, 32, 0.55) 100%
+    );
+  }
+
+  .ko-uicard-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.85rem 0.85rem 0;
+    color: #fff;
+  }
+
+  .ko-uicard-overlay-left {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    max-width: 55%;
+  }
+
+  .ko-uicard-overlay-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    text-align: end;
+    max-width: 48%;
+  }
+
+  .ko-uicard-location {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+  }
+
+  .ko-uicard-location span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 9rem;
+  }
+
+  .ko-uicard-temp {
+    margin: 0.15rem 0 0;
+    font-size: 1.25rem;
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    text-shadow: 0 1px 10px rgba(0, 0, 0, 0.4);
+  }
+
+  .ko-uicard-temp span {
+    margin-inline-start: 0.15rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    opacity: 0.9;
+  }
+
+  .ko-uicard-date {
+    margin: 0.1rem 0 0;
+    font-size: 0.68rem;
+    font-weight: 500;
+    opacity: 0.92;
+  }
+
+  .ko-uicard-body {
+    width: 100%;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
+    padding: 0.65rem 1rem 0.85rem;
+    background: #fff;
+  }
+
+  .ko-uicard-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    color: #64748b;
+    font-size: 0.78rem;
+    min-width: 0;
+  }
+
+  .ko-uicard-row-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+    min-width: 0;
+  }
+
+  .ko-uicard-row-value {
+    margin: 0;
+    font-weight: 600;
+    color: #475569;
+    text-align: end;
+    flex-shrink: 0;
+  }
+
+  .ko-uicard-title {
+    margin: 0;
+    width: 100%;
+    color: #0a3d54;
+    font-size: 0.92rem;
+    font-weight: 700;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .ko-uicard-sep {
+    width: 100%;
+    height: 2px;
+    border-radius: 1px;
+    background: rgb(233, 233, 233);
+  }
+
+  @media (max-width: 640px) {
+    .ko-uicard {
+      min-height: 20.5rem;
+      box-shadow: 8px 8px 0 rgba(10, 61, 84, 0.07);
+    }
+    .ko-uicard-media {
+      min-height: 10.5rem;
+      height: 55%;
+    }
+    .ko-uicard-temp {
+      font-size: 1.1rem;
+    }
+  }
+
+  .ko-hide-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .ko-hide-scroll::-webkit-scrollbar { display: none; }
+
+  .ko-skeleton {
+    background: linear-gradient(90deg, #e8eef1 0%, #f4f7f8 45%, #e8eef1 90%);
+    background-size: 200% 100%;
+    animation: ko-shimmer 1.4s ease-in-out infinite;
+  }
+
+  .ko-hero-glow {
+    animation: ko-float 10s ease-in-out infinite;
+  }
+
+  .ko-hero-glow-slow {
+    animation: ko-float 14s ease-in-out infinite reverse;
   }
 
   .ko-btn-primary {
@@ -137,11 +348,25 @@
   }
 }
 
+@keyframes ko-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+@keyframes ko-float {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-18px) scale(1.04); }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .ko-uicard,
   .ko-fade-up,
   .ko-fade-up-delay,
   .ko-fade-up-delay-2,
-  .ko-card {
+  .ko-card,
+  .ko-hero-glow,
+  .ko-hero-glow-slow,
+  .ko-skeleton {
     animation: none !important;
     transition: none !important;
     transform: none !important;

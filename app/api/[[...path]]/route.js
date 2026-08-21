@@ -7,8 +7,10 @@ import {
 import { getRequestUser, requireUser, requireAdmin, isMockMode, hashIp } from '@/lib/auth';
 import * as db from '@/lib/db';
 
-const json = (data, status = 200) =>
-  NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
+const json = (data, status = 200, cache = 'no-store') =>
+  NextResponse.json(data, { status, headers: { 'Cache-Control': cache } });
+
+const PUBLIC_CACHE = 'public, max-age=30, s-maxage=60, stale-while-revalidate=300';
 
 // ---- mock stores (dev / MOCK_MODE only) ----
 const revealCounts = new Map();
@@ -29,6 +31,114 @@ const users = [
 const invoices = [
   { id: 'inv-1', user: 'Ayşe Yılmaz', package: 'Pro', amount: 2000, currency: 'TRY', status: 'paid', bank_reference: 'KO-PRO-AYSE-01', issued_at: new Date(Date.now() - 20 * 86400000).toISOString() },
 ];
+/** Mock admin review outcomes for seed + created listings: id -> { status, rejection_reason } */
+const listingModeration = new Map();
+
+function mockAdminListingDetail(id) {
+  const created = userListings.find((u) => u.id === id);
+  if (created) {
+    return {
+      item: {
+        id: created.id,
+        reference_code: created.reference_code,
+        status: listingModeration.get(id)?.status || created.status,
+        rejection_reason: listingModeration.get(id)?.rejection_reason || created.rejection_reason || null,
+        risk_flags: created.risk_flags || [],
+        title: created.title,
+        title_tr: created.title,
+        description: created.description || '',
+        property_type: created.property_type || 'apartment',
+        bedrooms: created.bedrooms ?? 1,
+        bathrooms: created.bathrooms ?? 1,
+        furnished: created.furnished !== false,
+        size_sqm: created.size_sqm || null,
+        max_occupants: created.max_occupants || null,
+        gender_preference: created.gender_preference || 'any',
+        available_from: created.available_from || null,
+        minimum_stay_months: created.minimum_stay_months || null,
+        price: created.price,
+        deposit: created.deposit || null,
+        bills_included: !!created.bills_included,
+        bills_note: created.bills_note || '',
+        agency_fee_note: created.agency_fee_note || '',
+        amenities: created.amenities || [],
+        city: created.city,
+        neighbourhood: created.neighbourhood || '',
+        address_private: created.address_private || '',
+        university: created.university_id
+          ? (() => {
+              const u = UNIVERSITIES.find((x) => x.id === created.university_id);
+              return u ? { id: u.id, slug: u.slug, name: u.name_tr, city: u.city } : null;
+            })()
+          : null,
+        photos: created.photos || (created.photo ? [created.photo] : [LISTINGS[0].photos[0]]),
+        owner: {
+          display_name: created.owner,
+          full_name: created.owner,
+          phone: created.phone || null,
+          email: null,
+          is_agency: false,
+          verification_status: 'pending',
+        },
+        created_at: created.created_at,
+        view_count: created.view_count || 0,
+        contact_reveal_count: created.contact_reveal_count || 0,
+      },
+    };
+  }
+
+  const l = LISTINGS.find((x) => x.id === id);
+  if (!l) return null;
+  const mod = listingModeration.get(id);
+  const uni = UNIVERSITIES.find((u) => u.id === l.uni);
+  return {
+    item: {
+      id: l.id,
+      reference_code: l.reference_code,
+      status: mod?.status || 'pending_review',
+      rejection_reason: mod?.rejection_reason || null,
+      risk_flags: l.risk_flags || [],
+      title: l.title_tr,
+      title_tr: l.title_tr,
+      title_en: l.title_en,
+      description: l.description_tr,
+      description_tr: l.description_tr,
+      description_en: l.description_en,
+      property_type: l.property_type,
+      bedrooms: l.bedrooms,
+      bathrooms: l.bathrooms,
+      furnished: l.furnished,
+      size_sqm: l.size_sqm,
+      max_occupants: l.max_occupants,
+      gender_preference: l.gender_preference,
+      available_from: l.available_from,
+      minimum_stay_months: l.minimum_stay_months,
+      price: l.price,
+      deposit: l.deposit || null,
+      bills_included: l.bills_included,
+      bills_note: l.bills_note,
+      agency_fee_note: l.agency_fee_note,
+      amenities: l.amenities || [],
+      city: l.city,
+      neighbourhood: l.neighbourhood,
+      address_private: `${l.neighbourhood}, ${l.city} — örnek gizli adres ${l.reference_code}`,
+      university: uni ? { id: uni.id, slug: uni.slug, name: uni.name_tr, city: uni.city } : null,
+      photos: l.photos || [],
+      owner: {
+        display_name: l.landlord.name,
+        full_name: l.landlord.name,
+        phone: l.landlord.phone,
+        email: null,
+        is_agency: !!l.landlord.is_agency,
+        agency_name: l.landlord.is_agency ? l.landlord.name : null,
+        verification_status: l.landlord.verified ? 'verified' : 'pending',
+      },
+      created_at: l.published_at || new Date().toISOString(),
+      view_count: l.view_count || 0,
+      contact_reveal_count: l.contact_reveal_count || 0,
+    },
+  };
+}
 
 function audit(actor, action, entity_type, entity_id, before, after) {
   auditLog.unshift({
@@ -110,14 +220,14 @@ async function handleMock(request, route, path, method, sp) {
       },
       cities: [...new Set(LISTINGS.map((l) => l.city))],
       mock: true,
-    });
+    }, 200, PUBLIC_CACHE);
   }
 
   if (route === 'listings' && method === 'GET') {
     const items = filterListings(sp);
     const limit = Number(sp.get('limit') || 0);
     const out = (limit ? items.slice(0, limit) : items).map((l) => ({ ...publicListing(l), price_index: priceIndexInfo(l) }));
-    return json({ total: items.length, items: out });
+    return json({ total: items.length, items: out }, 200, PUBLIC_CACHE);
   }
 
   if (path[0] === 'listings' && path[1] && method === 'GET') {
@@ -130,17 +240,17 @@ async function handleMock(request, route, path, method, sp) {
       ...publicListing(l),
       university: uni ? { id: uni.id, slug: uni.slug, name_tr: uni.name_tr, name_en: uni.name_en, short: uni.short, city: uni.city } : null,
       price_index: priceIndexInfo(l), similar,
-    });
+    }, 200, PUBLIC_CACHE);
   }
 
   if (route === 'universities' && method === 'GET') {
-    return json({ items: UNIVERSITIES.map((u) => ({ ...u, listings_count: LISTINGS.filter((l) => l.uni === u.id).length })) });
+    return json({ items: UNIVERSITIES.map((u) => ({ ...u, listings_count: LISTINGS.filter((l) => l.uni === u.id).length })) }, 200, PUBLIC_CACHE);
   }
   if (path[0] === 'universities' && path[1] && method === 'GET') {
     const uni = UNIVERSITIES.find((u) => u.slug === path[1]);
     if (!uni) return json({ error: 'not_found' }, 404);
     const listings = LISTINGS.filter((l) => l.uni === uni.id).map((l) => ({ ...publicListing(l), price_index: priceIndexInfo(l) }));
-    return json({ university: uni, listings_count: listings.length, listings, price_index: PRICE_INDEX.filter((p) => p.university_id === uni.id) });
+    return json({ university: uni, listings_count: listings.length, listings, price_index: PRICE_INDEX.filter((p) => p.university_id === uni.id) }, 200, PUBLIC_CACHE);
   }
 
   // Reveal in mock still requires a real Bearer token when Supabase is configured;
@@ -243,21 +353,46 @@ async function handleMock(request, route, path, method, sp) {
 
   if (route === 'admin/queue' && method === 'GET') {
     const seedPending = LISTINGS.filter((l) => l.risk_flags && l.risk_flags.length > 0)
+      .filter((l) => {
+        const mod = listingModeration.get(l.id);
+        return !mod || mod.status === 'pending_review';
+      })
       .map((l) => ({
         id: l.id, reference_code: l.reference_code, title: l.title_tr, owner: l.landlord.name,
         status: 'pending_review', risk_flags: l.risk_flags, photo: l.photos[0],
-        price: l.price, priority: true,
+        price: l.price, city: l.city, priority: true,
       }));
-    const created = userListings.filter((u) => u.status === 'pending_review').map((u) => ({ ...u, risk_flags: [], priority: false }));
+    const created = userListings
+      .filter((u) => (listingModeration.get(u.id)?.status || u.status) === 'pending_review')
+      .map((u) => ({ ...u, risk_flags: u.risk_flags || [], priority: false }));
     return json({ items: [...seedPending, ...created] });
+  }
+  if (path[0] === 'admin' && path[1] === 'listings' && path[2] && method === 'GET') {
+    const detail = mockAdminListingDetail(path[2]);
+    if (!detail) return json({ error: 'not_found' }, 404);
+    return json(detail);
   }
   if (route === 'admin/review' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
+    const action = b.action === 'request_changes' ? 'request_changes' : b.action;
+    if (!['approve', 'reject', 'request_changes'].includes(action)) return json({ error: 'invalid' }, 400);
+    const reason = (b.reason || '').trim();
+    if ((action === 'reject' || action === 'request_changes') && !reason) {
+      return json({ error: 'reason_required' }, 400);
+    }
     const item = userListings.find((u) => u.id === b.id);
-    const before = item ? item.status : 'pending_review';
-    if (item) item.status = b.action === 'approve' ? 'published' : 'rejected';
-    audit('Admin', `listing.${b.action}`, 'listing', b.id, { status: before }, { status: b.action === 'approve' ? 'published' : 'rejected', reason: b.reason || null });
-    return json({ ok: true });
+    const before = item ? item.status : (listingModeration.get(b.id)?.status || 'pending_review');
+    const status = action === 'approve' ? 'published' : 'rejected';
+    const rejection_reason = action === 'approve'
+      ? null
+      : `${action === 'request_changes' ? 'Lütfen şu bilgileri düzeltip ilanı tekrar incelemeye gönderin:\n' : ''}${reason}`;
+    if (item) {
+      item.status = status;
+      item.rejection_reason = rejection_reason;
+    }
+    listingModeration.set(b.id, { status, rejection_reason });
+    audit('Admin', `listing.${action}`, 'listing', b.id, { status: before }, { status, reason: rejection_reason });
+    return json({ ok: true, status, rejection_reason });
   }
   if (route === 'admin/reports' && method === 'GET') return json({ items: reports });
   if (route === 'admin/reports/resolve' && method === 'POST') {
@@ -311,21 +446,21 @@ async function handleMock(request, route, path, method, sp) {
 }
 
 async function handleLive(request, route, path, method, sp, user) {
-  if (route === 'config' && method === 'GET') return json(await db.dbGetConfig());
+  if (route === 'config' && method === 'GET') return json(await db.dbGetConfig(), 200, PUBLIC_CACHE);
 
-  if (route === 'listings' && method === 'GET') return json(await db.dbListListings(sp));
+  if (route === 'listings' && method === 'GET') return json(await db.dbListListings(sp), 200, PUBLIC_CACHE);
 
   if (path[0] === 'listings' && path[1] && method === 'GET') {
     const data = await db.dbGetListingByRef(path[1]);
     if (!data) return json({ error: 'not_found' }, 404);
-    return json(data);
+    return json(data, 200, PUBLIC_CACHE);
   }
 
-  if (route === 'universities' && method === 'GET') return json(await db.dbUniversities());
+  if (route === 'universities' && method === 'GET') return json(await db.dbUniversities(), 200, PUBLIC_CACHE);
   if (path[0] === 'universities' && path[1] && method === 'GET') {
     const data = await db.dbUniversityBySlug(path[1]);
     if (!data) return json({ error: 'not_found' }, 404);
-    return json(data);
+    return json(data, 200, PUBLIC_CACHE);
   }
 
   if (route === 'reveal' && method === 'POST') {
@@ -390,11 +525,29 @@ async function handleLive(request, route, path, method, sp, user) {
     const body = await request.json().catch(() => ({}));
     return json(await db.dbBecomeLandlord(user, body));
   }
+  if (route === 'my/profile' && method === 'GET') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    return json({ profile: await db.dbGetMyProfile(user) });
+  }
   if (route === 'my/profile' && method === 'POST') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);
     const body = await request.json().catch(() => ({}));
     return json(await db.dbUpdateProfile(user, body));
+  }
+  if (path[0] === 'my' && path[1] === 'profile' && path[2] === 'avatar' && method === 'POST') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const form = await request.formData().catch(() => null);
+    const file = form?.get('file') || form?.get('avatar');
+    if (!file || typeof file === 'string' || !file.arrayBuffer) {
+      return json({ error: 'invalid' }, 400);
+    }
+    const buf = Buffer.from(await file.arrayBuffer());
+    const result = await db.dbUploadAvatar(user, buf, file.type || 'image/jpeg', file.name || 'avatar.jpg');
+    if (result.error) return json({ error: result.error, detail: result.detail || null }, result.status);
+    return json(result);
   }
   if (route === 'my/saved' && method === 'GET') {
     const denied = requireUser(user);
@@ -430,6 +583,11 @@ async function handleLive(request, route, path, method, sp, user) {
   }
 
   if (route === 'admin/queue' && method === 'GET') return json(await db.dbAdminQueue());
+  if (path[0] === 'admin' && path[1] === 'listings' && path[2] && method === 'GET') {
+    const result = await db.dbAdminListingDetail(path[2]);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
   if (route === 'admin/review' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
     const result = await db.dbAdminReview(user, body);
@@ -517,9 +675,7 @@ async function handleLive(request, route, path, method, sp, user) {
   return null;
 }
 
-async function handle(request, ctx) {
-  const params = await ctx.params;
-  const path = params?.path || [];
+async function handle(request, { path = [] } = {}) {
   const route = path.join('/');
   const url = new URL(request.url);
   const sp = url.searchParams;
@@ -599,7 +755,19 @@ async function handle(request, ctx) {
   }
 }
 
-export const GET = handle;
-export const POST = handle;
-export const PATCH = handle;
-export const DELETE = handle;
+export async function GET(request, ctx) {
+  const params = await ctx.params;
+  return handle(request, { path: params?.path || [] });
+}
+export async function POST(request, ctx) {
+  const params = await ctx.params;
+  return handle(request, { path: params?.path || [] });
+}
+export async function PATCH(request, ctx) {
+  const params = await ctx.params;
+  return handle(request, { path: params?.path || [] });
+}
+export async function DELETE(request, ctx) {
+  const params = await ctx.params;
+  return handle(request, { path: params?.path || [] });
+}

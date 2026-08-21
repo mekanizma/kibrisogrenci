@@ -6,19 +6,21 @@ const sans = Plus_Jakarta_Sans({
   subsets: ['latin', 'latin-ext'],
   display: 'swap',
   variable: '--font-sans',
+  preload: true,
 })
 
 const display = Fraunces({
   subsets: ['latin', 'latin-ext'],
   display: 'swap',
   variable: '--font-display',
+  preload: false,
 })
 
 export const metadata = {
   title: 'Kıbrıs Öğrenci — KKTC Öğrenci Konaklaması',
   description:
     'Kuzey Kıbrıs üniversitelerine yakın, doğrulanmış öğrenci konaklaması. Kampüse yürüme mesafesi, adil fiyat karşılaştırması ve doğrulanmış ilan sahipleri.',
-  icons: { icon: '/logo.svg', apple: '/logo.png' },
+  icons: { icon: '/logo-icon.png', apple: '/logo-icon.png' },
 }
 
 export default function RootLayout({ children }) {

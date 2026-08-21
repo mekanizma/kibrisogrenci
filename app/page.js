@@ -1,19 +1,45 @@
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
+import Image from 'next/image';
+import { useQuery } from '@tanstack/react-query';
 import {
   Search, MapPin, ShieldCheck, BadgeCheck, Wifi, Snowflake, Car, Waves,
-  Dumbbell, AlertTriangle, ChevronLeft, Menu, Globe, TrendingDown, TrendingUp,
+  Dumbbell, ChevronLeft, Menu, TrendingDown, TrendingUp,
   Phone, MessageCircle, X, Check, GraduationCap, Building2, Info, Clock,
   BedDouble, Bath, Maximize, Flag, Lock, Sofa, Trees, ShieldAlert, Waypoints, Users, Heart, SlidersHorizontal,
+  ArrowRight, Sparkles, Footprints, ChevronRight, ChevronDown, Eye, EyeOff, Mail, User,
 } from 'lucide-react';
-import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-} from 'recharts';
-import { messages, tFor, LOCALES, LOCALE_LABEL, isRTL, listingLang, isMachineTranslated } from '@/lib/i18n';
-import { DashboardView, AdminView, WhatsAppView } from '@/components/panels';
+import { tFor, LOCALES, LOCALE_LABEL, isRTL, listingLang, isMachineTranslated } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase/client';
 import { api, refreshSessionIntoAuth, signOutEverywhere, setAccessToken } from '@/lib/api-client';
+import { MOCK_PHOTOS } from '@/lib/mock-featured';
+
+const DashboardView = dynamic(
+  () => import('@/components/panels').then((m) => m.DashboardView),
+  { ssr: false, loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div> },
+);
+const AdminView = dynamic(
+  () => import('@/components/panels').then((m) => m.AdminView),
+  { ssr: false, loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div> },
+);
+const WhatsAppView = dynamic(
+  () => import('@/components/panels').then((m) => m.WhatsAppView),
+  { ssr: false, loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div> },
+);
+const PriceHistoryChart = dynamic(() => import('@/components/PriceHistoryChart'), {
+  ssr: false,
+  loading: () => <div className="h-40 animate-pulse rounded-xl bg-slate-100" />,
+});
+const ListingMap = dynamic(() => import('@/components/ListingMap'), {
+  ssr: false,
+  loading: () => <div className="h-56 animate-pulse rounded-xl bg-slate-100 border border-slate-200" />,
+});
+const ProfileView = dynamic(() => import('@/components/ProfileView'), {
+  ssr: false,
+  loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div>,
+});
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -21,6 +47,16 @@ import { api, refreshSessionIntoAuth, signOutEverywhere, setAccessToken } from '
 const SYMBOL = { TRY: '₺', GBP: '£', USD: '$', EUR: '€' };
 const LOCALE_TAG = { tr: 'tr-TR', en: 'en-GB' };
 const ALLOW_DEMO_AUTH = process.env.NEXT_PUBLIC_ALLOW_DEMO_AUTH === 'true';
+
+function listingPhoto(l, i = 0) {
+  const p = Array.isArray(l?.photos) ? l.photos[i] : null;
+  if (p && typeof p === 'string') {
+    if (p.startsWith('/api/media')) return p;
+    if (/^https?:\/\//i.test(p) && !p.includes('logo')) return p;
+  }
+  const idx = Math.abs(String(l?.id || l?.reference_code || i).length + i) % MOCK_PHOTOS.length;
+  return MOCK_PHOTOS[idx];
+}
 
 function fmtMoney(amount, currency, locale) {
   const n = Number(amount).toLocaleString(LOCALE_TAG[locale] || 'en-GB');
@@ -105,62 +141,105 @@ function PriceDisplay({ price, currency, fx, locale, t, size = 'lg' }) {
   );
 }
 
+const REPORT_REASONS = ['scam', 'fake', 'unavailable', 'offensive', 'other'];
+
 function ListingCard({ l, t, locale, currency, fx, onOpen }) {
-  const photo = (l.photos && l.photos[0]) || '/logo.svg';
+  const photo = listingPhoto(l, 0);
+  const same = l.price?.currency === currency;
+  const priceLabel = same
+    ? fmtMoney(l.price.amount, l.price.currency, locale)
+    : `≈ ${fmtMoney(convertMoney(l.price.amount, l.price.currency, currency, fx), currency, locale)}`;
+  const [imgSrc, setImgSrc] = useState(photo);
+  const title = locale === 'tr' ? l.title_tr : l.title_en;
+  const bedsLabel = l.property_type === 'room'
+    ? t('listing.private_room')
+    : (l.bedrooms > 0 ? `${l.bedrooms} ${t('listing.bedrooms_n')}` : t('ptype.studio'));
+  const walkLabel = l.walking_minutes != null
+    ? `${l.walking_minutes} dk`
+    : (l.distance_m != null ? `${(Number(l.distance_m) / 1000).toFixed(1)} km` : null);
+
   return (
     <button
+      type="button"
       onClick={() => onOpen(l.reference_code)}
-      className="ko-card group text-start flex flex-col"
+      className="ko-uicard group"
     >
-      <div className="relative aspect-[4/3] overflow-hidden bg-[var(--ko-mist)]">
-        <img src={photo} alt={locale === 'tr' ? l.title_tr : l.title_en}
-          loading="lazy"
-          className="h-full w-full object-cover group-hover:scale-[1.04] transition-transform duration-700 ease-out" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#08304a]/45 via-transparent to-transparent opacity-80" />
-        <div className="absolute top-2.5 start-2.5 flex gap-1.5">
-          {l.landlord_verified && <VerifiedPill t={t} small />}
-          {l.landlord_is_agency && (
-            <span className="ko-chip bg-white/95 text-slate-700 shadow-sm">
-              <Building2 className="h-3 w-3" /> {t('listing.agency')}
-            </span>
-          )}
-        </div>
-        {(l.walking_minutes != null || l.distance_m != null) && (
-          <div className="absolute bottom-2.5 start-2.5">
-            <span className="ko-chip bg-white/95 text-[#0a3d54] shadow-sm">
-              <Waypoints className="h-3 w-3 text-[#0a4d68]" />
-              {l.walking_minutes != null ? `${l.walking_minutes} dk` : ''}
-              {l.walking_minutes != null && l.distance_m != null ? ' · ' : ''}
-              {l.distance_m != null ? `${(Number(l.distance_m) / 1000).toFixed(1)}km` : ''}
-            </span>
+      <section className="ko-uicard-media">
+        <Image
+          src={imgSrc}
+          alt={title || ''}
+          fill
+          sizes="(max-width:640px) 90vw, (max-width:1024px) 45vw, 320px"
+          className="object-cover transition-transform duration-700 ease-out group-hover:scale-[1.05]"
+          unoptimized={typeof imgSrc === 'string' && imgSrc.startsWith('/api/media')}
+          onError={() => setImgSrc(MOCK_PHOTOS[0])}
+        />
+        <div className="ko-uicard-filter" aria-hidden />
+        <div className="ko-uicard-overlay">
+          <div className="ko-uicard-overlay-left">
+            {l.landlord_verified && <VerifiedPill t={t} small />}
+            {l.landlord_is_agency && (
+              <span className="ko-chip bg-white/90 text-slate-700 shadow-sm">
+                <Building2 className="h-3 w-3" /> {t('listing.agency')}
+              </span>
+            )}
           </div>
-        )}
-      </div>
-      <div className="p-4 sm:p-5 flex flex-col gap-2 flex-1">
-        <div className="flex items-center gap-1.5 text-xs text-slate-500">
-          <MapPin className="h-3.5 w-3.5 text-[#0a4d68]" /> {l.neighbourhood}, {l.city}
+          <div className="ko-uicard-overlay-right">
+            <div className="ko-uicard-location">
+              <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span>{l.city || l.neighbourhood || '—'}</span>
+            </div>
+            <p className="ko-uicard-temp">{priceLabel}<span>{t('listing.per_month')}</span></p>
+            {walkLabel && (
+              <p className="ko-uicard-date">
+                <Waypoints className="inline h-3 w-3 me-1 align-[-2px]" />
+                {walkLabel}
+              </p>
+            )}
+          </div>
         </div>
-        <h3 className="font-semibold text-[#0a3d54] leading-snug line-clamp-2 min-h-[2.6rem]">
-          {locale === 'tr' ? l.title_tr : l.title_en}
-        </h3>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-          <span>{t(`ptype.${l.property_type}`)}</span>
-          <span className="text-slate-300">·</span>
-          {l.property_type === 'room'
-            ? <span>{t('listing.private_room')}</span>
-            : (l.bedrooms > 0 ? <span>{l.bedrooms} {t('listing.bedrooms_n')}</span> : <span>{t('ptype.studio')}</span>)}
-          {l.size_sqm ? (<><span className="text-slate-300">·</span><span>{l.size_sqm} m²</span></>) : null}
+      </section>
+
+      <section className="ko-uicard-body">
+        <div className="ko-uicard-row">
+          <p className="ko-uicard-row-label">
+            <MapPin className="h-3.5 w-3.5 shrink-0 text-[#0a4d68]" />
+            <span className="truncate">{[l.neighbourhood, l.city].filter(Boolean).join(', ')}</span>
+          </p>
+          {l.price_index ? (
+            <span className="ko-uicard-row-value shrink-0">
+              <PriceIndexPill pi={l.price_index} t={t} listing={l} />
+            </span>
+          ) : null}
         </div>
+        <div className="ko-uicard-sep" />
+        <div className="ko-uicard-row">
+          <p className="ko-uicard-title">{title}</p>
+        </div>
+        <div className="ko-uicard-sep" />
+        <div className="ko-uicard-row">
+          <p className="ko-uicard-row-label">{t(`ptype.${l.property_type}`)}</p>
+          <p className="ko-uicard-row-value">{bedsLabel}</p>
+        </div>
+        {l.size_sqm ? (
+          <>
+            <div className="ko-uicard-sep" />
+            <div className="ko-uicard-row">
+              <p className="ko-uicard-row-label">{t('listing.size')}</p>
+              <p className="ko-uicard-row-value">{l.size_sqm} m²</p>
+            </div>
+          </>
+        ) : null}
         {l.room_share && (
-          <span className="ko-chip w-fit bg-[#0a4d68]/10 text-[#0a4d68]">
-            <Users className="h-3 w-3" /> {t('listing.shared')} · +{l.flatmates} {t('listing.flatmates')}
-          </span>
+          <>
+            <div className="ko-uicard-sep" />
+            <div className="ko-uicard-row">
+              <p className="ko-uicard-row-label">{t('listing.shared')}</p>
+              <p className="ko-uicard-row-value">+{l.flatmates} {t('listing.flatmates')}</p>
+            </div>
+          </>
         )}
-        <div className="mt-auto pt-3 flex items-end justify-between gap-2 border-t border-slate-100">
-          <PriceDisplay price={l.price} currency={currency} fx={fx} locale={locale} t={t} size="md" />
-          <PriceIndexPill pi={l.price_index} t={t} listing={l} />
-        </div>
-      </div>
+      </section>
     </button>
   );
 }
@@ -180,42 +259,11 @@ function ScamBanner({ t, compact }) {
 }
 
 function MapCircle({ l, t }) {
+  const lat = l?.approx_lat;
+  const lng = l?.approx_lng;
+  const label = `${l?.neighbourhood || ''}${l?.neighbourhood && l?.city ? ', ' : ''}${l?.city || ''} · ${t('listing.approx_location')}`;
   return (
-    <div className="relative h-56 w-full rounded-xl overflow-hidden border border-slate-200 bg-gradient-to-br from-[#e8f2f6] to-[#dbeafe]">
-      <div className="absolute inset-0 opacity-40"
-        style={{ backgroundImage: 'linear-gradient(#94a3b8 1px, transparent 1px), linear-gradient(90deg, #94a3b8 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <div className="h-28 w-28 rounded-full bg-[#0a4d68]/20 border-2 border-[#0a4d68]/40 flex items-center justify-center animate-pulse">
-          <div className="h-16 w-16 rounded-full bg-[#0a4d68]/30" />
-        </div>
-      </div>
-      <div className="absolute bottom-2 start-2 rounded-lg bg-white/90 px-2.5 py-1.5 text-xs text-slate-600 flex items-center gap-1.5">
-        <MapPin className="h-3.5 w-3.5 text-[#0a4d68]" /> {l.neighbourhood}, {l.city} · {t('listing.approx_location')}
-      </div>
-    </div>
-  );
-}
-
-function PriceHistoryChart({ history, currency, fx, locale, t }) {
-  if (!history?.length) {
-    return <p className="text-sm text-slate-400 py-6 text-center">{t('priceindex.no_history')}</p>;
-  }
-  const data = history.map(h => ({
-    date: new Date(h.changed_at).toLocaleDateString(LOCALE_TAG[locale] || 'en-GB', { month: 'short' }),
-    value: convertMoney(h.price.amount, h.price.currency, currency, fx),
-  }));
-  return (
-    <div className="h-40 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-          <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
-          <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} width={48}
-            tickFormatter={(v) => `${SYMBOL[currency]}${v}`} />
-          <Tooltip formatter={(v) => [`${SYMBOL[currency]}${Number(v).toLocaleString()}`, t('priceindex.history')]} />
-          <Line type="monotone" dataKey="value" stroke="#0a4d68" strokeWidth={2.5} dot={{ r: 3, fill: '#0a4d68' }} />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+    <ListingMap lat={lat} lng={lng} label={label} radiusM={300} />
   );
 }
 
@@ -228,7 +276,7 @@ export default function App() {
   const [config, setConfig] = useState(null);
   const [view, setView] = useState({ name: 'home' });
   const [auth, setAuth] = useState({ signedIn: false });
-  const [authModal, setAuthModal] = useState(false);
+  const [authModal, setAuthModal] = useState(false); // false | 'signin' | 'signup'
   const [reportModal, setReportModal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -238,6 +286,14 @@ export default function App() {
   useEffect(() => {
     api('config').then(r => r.json()).then(setConfig).catch(() => {});
     refreshSessionIntoAuth(setAuth);
+    // Clear expired email-link error from URL so it doesn't look like a login loop
+    if (typeof window !== 'undefined' && window.location.search.includes('error=')) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('error_code') === 'otp_expired' || url.searchParams.get('error') === 'access_denied') {
+        url.search = '';
+        window.history.replaceState({}, '', url.pathname);
+      }
+    }
     const supabase = createClient();
     if (!supabase) return undefined;
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -247,7 +303,7 @@ export default function App() {
           signedIn: true,
           studentId: session.user.id,
           email: session.user.email,
-          role: session.user.app_metadata?.role || 'student',
+          role: session.user.app_metadata?.role || session.user.user_metadata?.role || 'student',
           accessToken: session.access_token,
         });
       } else {
@@ -272,7 +328,7 @@ export default function App() {
     auth, setAuth, setAuthModal, setReportModal };
 
   return (
-    <div className="min-h-screen text-slate-800 overflow-x-hidden">
+    <div className="min-h-screen text-slate-800">
       <Header {...shared} locale={locale} setLocale={setLocale} currency={currency} setCurrency={setCurrency}
         setView={setView} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
 
@@ -293,13 +349,52 @@ export default function App() {
         {view.name === 'admin' && <AdminView t={t} locale={locale} auth={auth} />}
         {view.name === 'whatsapp' && <WhatsAppView t={t} locale={locale} />}
         {view.name === 'saved' && <SavedView {...shared} />}
+        {view.name === 'profile' && (
+          <ProfileView
+            t={t}
+            locale={locale}
+            currency={currency}
+            setLocale={setLocale}
+            setCurrency={setCurrency}
+            config={config}
+            auth={auth}
+            setAuthModal={setAuthModal}
+          />
+        )}
       </main>
 
       <Footer t={t} config={config} setView={setView} goUniversity={goUniversity} />
 
-      {authModal && <AuthModal t={t} onClose={() => setAuthModal(false)} setAuth={setAuth} />}
+      {authModal && (
+        <AuthModal
+          t={t}
+          locale={locale}
+          initialMode={authModal === 'signin' || authModal === 'signup' ? authModal : 'signin'}
+          onClose={() => setAuthModal(false)}
+          setAuth={setAuth}
+        />
+      )}
       {reportModal && <ReportModal t={t} refCode={reportModal} onClose={() => setReportModal(false)} />}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Brand mark — uses provided logo artwork
+// ---------------------------------------------------------------------------
+function BrandMark({ className = 'h-10 w-auto', title = 'Kıbrıs Öğrenci', variant = 'full' }) {
+  const src = variant === 'icon' ? '/logo-icon.png' : '/logo-sm.png';
+  return (
+    <img
+      src={src}
+      alt={title}
+      width={variant === 'icon' ? 48 : 260}
+      height={variant === 'icon' ? 48 : 120}
+      className={`${className} shrink-0 object-contain`}
+      draggable={false}
+      decoding="async"
+      fetchPriority={variant === 'full' ? 'high' : 'auto'}
+    />
   );
 }
 
@@ -307,44 +402,103 @@ export default function App() {
 // Header
 // ---------------------------------------------------------------------------
 function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, setAuth, setAuthModal, config, menuOpen, setMenuOpen }) {
-  const go = (v) => { setView(v); setMenuOpen(false); };
+  const [guideOpen, setGuideOpen] = useState(false);
+  const guideRef = useRef(null);
+  const go = (v) => { setView(v); setMenuOpen(false); setGuideOpen(false); };
   const navItems = [
     ['search', () => go({ name: 'search', filters: {} })],
-    ['how', () => go({ name: 'how' })],
-    ['scam', () => go({ name: 'scam' })],
     ['dashboard', () => go({ name: 'dashboard' })],
     ...(auth.signedIn ? [['saved', () => go({ name: 'saved' })]] : []),
     ...(auth.role === 'admin' ? [['admin', () => go({ name: 'admin' })]] : []),
     ['whatsapp', () => go({ name: 'whatsapp' })],
   ];
+  const guideItems = [
+    ['how', () => go({ name: 'how' })],
+    ['scam', () => go({ name: 'scam' })],
+  ];
+  const mobileNavItems = [
+    ['search', () => go({ name: 'search', filters: {} })],
+    ...guideItems,
+    ['dashboard', () => go({ name: 'dashboard' })],
+    ...(auth.signedIn ? [['saved', () => go({ name: 'saved' })], ['profile', () => go({ name: 'profile' })]] : []),
+    ...(auth.role === 'admin' ? [['admin', () => go({ name: 'admin' })]] : []),
+    ['whatsapp', () => go({ name: 'whatsapp' })],
+  ];
+
+  useEffect(() => {
+    if (!guideOpen) return undefined;
+    const onDoc = (e) => {
+      if (guideRef.current && !guideRef.current.contains(e.target)) setGuideOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setGuideOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [guideOpen]);
+
   return (
-    <header className="sticky top-0 z-40 border-b border-[#0a3d54]/10 bg-white/80 backdrop-blur-xl">
-      <div className="container flex items-center justify-between h-[4.25rem] gap-2">
-        <button onClick={() => go({ name: 'home' })} className="flex items-center gap-2.5 shrink-0 min-w-0 group">
-          <span className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--ko-mist)] ring-1 ring-[#0a4d68]/10 overflow-hidden">
-            <img src="/logo.png" alt={t('brand')} className="h-9 w-9 object-contain" />
-          </span>
-          <div className="text-start leading-none min-w-0">
-            <div className="ko-display font-semibold text-[#0a3d54] text-lg sm:text-xl truncate group-hover:text-[#0a4d68] transition-colors">{t('brand')}</div>
-            <div className="text-[10px] text-slate-500 hidden md:block truncate mt-0.5 tracking-wide">{t('tagline')}</div>
-          </div>
+    <header className="sticky top-0 z-50 border-b border-[#0a3d54]/10 bg-[#f6f4f0]/95 backdrop-blur-xl">
+      <div className="container flex items-center justify-between h-16 sm:h-[4.25rem] gap-2">
+        <button
+          type="button"
+          onClick={() => go({ name: 'home' })}
+          className="flex items-center shrink-0 min-w-0 group cursor-pointer"
+          aria-label={t('brand')}
+        >
+          <BrandMark
+            title={t('brand')}
+            className="h-11 sm:h-12 w-auto max-w-[min(52vw,220px)] sm:max-w-[260px] transition-transform duration-300 group-hover:scale-[1.02] group-active:scale-[0.98]"
+          />
         </button>
 
         <nav className="hidden lg:flex items-center gap-1 text-sm font-medium text-slate-600">
           {navItems.map(([k, fn]) => (
-            <button key={k} onClick={fn} className="px-3 py-2 rounded-lg hover:bg-[var(--ko-mist)] hover:text-[#0a4d68] whitespace-nowrap transition-colors">{t(`nav.${k}`)}</button>
+            <button type="button" key={k} onClick={fn} className="px-3 py-2 rounded-lg hover:bg-[var(--ko-mist)] hover:text-[#0a4d68] whitespace-nowrap transition-colors cursor-pointer">{t(`nav.${k}`)}</button>
           ))}
+          <div className="relative" ref={guideRef}>
+            <button
+              type="button"
+              onClick={() => setGuideOpen((o) => !o)}
+              aria-expanded={guideOpen}
+              aria-haspopup="menu"
+              className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg whitespace-nowrap transition-colors cursor-pointer ${guideOpen ? 'bg-[var(--ko-mist)] text-[#0a4d68]' : 'hover:bg-[var(--ko-mist)] hover:text-[#0a4d68]'}`}
+            >
+              {t('nav.guides')}
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${guideOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {guideOpen && (
+              <div
+                role="menu"
+                className="absolute top-full start-0 mt-1.5 min-w-[220px] rounded-xl border border-slate-200/90 bg-white py-1.5 shadow-lg shadow-black/10 z-50"
+              >
+                {guideItems.map(([k, fn]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="menuitem"
+                    onClick={fn}
+                    className="w-full text-start px-3.5 py-2.5 text-sm text-slate-700 hover:bg-[var(--ko-mist)] hover:text-[#0a4d68] transition-colors"
+                  >
+                    {t(`nav.${k}`)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </nav>
 
         <div className="flex items-center gap-1.5 shrink-0">
           <select value={currency} onChange={e => setCurrency(e.target.value)}
-            className="h-9 rounded-xl border border-slate-200/80 bg-white/90 px-2 text-xs font-medium text-slate-600 focus:ring-2 focus:ring-[#0a4d68]/25 outline-none">
+            className="h-9 rounded-xl border border-slate-200/80 bg-white/90 px-2 text-xs font-medium text-slate-600 focus:ring-2 focus:ring-[#0a4d68]/25 outline-none cursor-pointer">
             {(config?.currencies || ['TRY', 'GBP', 'USD', 'EUR']).map(c => <option key={c} value={c}>{SYMBOL[c]} {c}</option>)}
           </select>
           <div className="hidden md:flex rounded-xl border border-slate-200/80 overflow-hidden bg-white/90">
             {LOCALES.map(l => (
-              <button key={l} onClick={() => setLocale(l)}
-                className={`px-2.5 h-9 text-xs font-semibold transition-colors ${locale === l ? 'bg-[#0a4d68] text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+              <button type="button" key={l} onClick={() => setLocale(l)}
+                className={`px-2.5 h-9 text-xs font-semibold transition-colors cursor-pointer ${locale === l ? 'bg-[#0a4d68] text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
                 {LOCALE_LABEL[l]}
               </button>
             ))}
@@ -354,32 +508,38 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
             {LOCALES.map(l => <option key={l} value={l}>{LOCALE_LABEL[l]}</option>)}
           </select>
           {auth.signedIn ? (
-            <button onClick={() => signOutEverywhere(setAuth)}
-              className="hidden md:inline-flex h-9 items-center rounded-xl px-3 text-sm font-medium text-slate-600 hover:bg-[var(--ko-mist)]">
-              {t('nav.signout')}
-            </button>
+            <>
+              <button type="button" onClick={() => go({ name: 'profile' })}
+                className="hidden md:inline-flex h-9 items-center rounded-xl px-3 text-sm font-medium text-slate-600 hover:bg-[var(--ko-mist)] cursor-pointer">
+                {t('nav.profile')}
+              </button>
+              <button type="button" onClick={() => signOutEverywhere(setAuth)}
+                className="hidden md:inline-flex h-9 items-center rounded-xl px-3 text-sm font-medium text-slate-600 hover:bg-[var(--ko-mist)] cursor-pointer">
+                {t('nav.signout')}
+              </button>
+            </>
           ) : (
-            <button onClick={() => setAuthModal(true)}
-              className="hidden md:inline-flex h-9 items-center rounded-xl bg-[#0a4d68] px-3.5 text-sm font-semibold text-white hover:bg-[#08415c] shadow-sm shadow-[#0a4d68]/20">
+            <button type="button" onClick={() => setAuthModal('signin')}
+              className="hidden md:inline-flex h-9 items-center rounded-xl bg-[#0a4d68] px-3.5 text-sm font-semibold text-white hover:bg-[#08415c] shadow-sm shadow-[#0a4d68]/20 cursor-pointer">
               {t('nav.signin')}
             </button>
           )}
-          <button onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden h-9 w-9 flex items-center justify-center rounded-xl border border-slate-200/80 text-slate-600 bg-white/90">
+          <button type="button" onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden h-11 w-11 flex items-center justify-center rounded-2xl border border-slate-200/80 text-slate-600 bg-white/90 cursor-pointer" aria-label="Menu">
             {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
       </div>
 
       {menuOpen && (
-        <div className="lg:hidden border-t border-slate-200/80 bg-white/95 backdrop-blur-xl">
-          <nav className="container py-3 flex flex-col gap-1">
-            {navItems.map(([k, fn]) => (
-              <button key={k} onClick={fn} className="text-start py-3 px-3 rounded-xl text-sm font-medium text-slate-700 hover:bg-[var(--ko-mist)]">{t(`nav.${k}`)}</button>
+        <div className="lg:hidden border-t border-slate-200/70 bg-[#f6f4f0]/98 backdrop-blur-xl max-h-[calc(100dvh-4rem)] overflow-y-auto">
+          <nav className="container py-3 pb-6 flex flex-col gap-1">
+            {mobileNavItems.map(([k, fn]) => (
+              <button type="button" key={k} onClick={fn} className="text-start min-h-12 py-3 px-3 rounded-2xl text-sm font-medium text-slate-700 hover:bg-white">{t(`nav.${k}`)}</button>
             ))}
             {auth.signedIn ? (
-              <button onClick={() => { signOutEverywhere(setAuth); setMenuOpen(false); }} className="text-start py-3 px-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">{t('nav.signout')}</button>
+              <button type="button" onClick={() => { signOutEverywhere(setAuth); setMenuOpen(false); }} className="text-start min-h-12 py-3 px-3 rounded-2xl text-sm font-medium text-slate-600 hover:bg-white">{t('nav.signout')}</button>
             ) : (
-              <button onClick={() => { setAuthModal(true); setMenuOpen(false); }} className="mt-1 h-11 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('nav.signin')}</button>
+              <button type="button" onClick={() => { setAuthModal('signin'); setMenuOpen(false); }} className="mt-2 h-12 rounded-2xl bg-[#0a4d68] text-white font-semibold">{t('nav.signin')}</button>
             )}
           </nav>
         </div>
@@ -393,99 +553,223 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
 // ---------------------------------------------------------------------------
 function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniversity, setView }) {
   const [featured, setFeatured] = useState([]);
+  const [featuredLoading, setFeaturedLoading] = useState(true);
   const [uni, setUni] = useState('');
   const [budget, setBudget] = useState('');
   const [movein, setMovein] = useState('');
 
   useEffect(() => {
-    api('listings?featured=1&limit=6').then(r => r.json()).then(d => setFeatured(d.items || [])).catch(() => {});
+    setFeaturedLoading(true);
+    api('listings?featured=1&limit=6')
+      .then(r => r.json())
+      .then(d => {
+        setFeatured(d.items || []);
+      })
+      .catch(() => setFeatured([]))
+      .finally(() => setFeaturedLoading(false));
   }, []);
 
   const stats = config?.stats;
   const unis = config?.universities || [];
-  const FEATURED = { tr: 'Öne çıkan ilanlar', en: 'Featured listings', ru: 'Рекомендуемые объявления', fr: 'Annonces en vedette', ar: 'إعلانات مميزة' };
-  const STAT = { listings: t('universities.listings_count'), universities: t('universities.title'), verified_landlords: t('trust.verified_badge'), cities: t('search.city') };
+  const cities = config?.cities || [];
+  const STAT = {
+    listings: t('universities.listings_count'),
+    universities: t('universities.title'),
+    verified_landlords: t('trust.verified_badge'),
+    cities: t('search.city'),
+  };
+  const trustIcons = [BadgeCheck, TrendingDown, ShieldAlert, Clock];
+  const uniTints = ['from-[#0a4d68] to-[#0e6a7a]', 'from-[#0b5a72] to-[#1a7a88]', 'from-[#08304a] to-[#0a4d68]', 'from-[#125e6e] to-[#0a4d68]', 'from-[#0a4d68] to-[#c9893a]', 'from-[#08415c] to-[#0e6a7a]'];
+  const fieldCls = 'h-12 w-full min-w-0 rounded-2xl border border-slate-200/90 bg-white px-3.5 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25 focus:border-[#0a4d68]/40';
+  const heroPhoto = '/hero.jpg';
+
+  const runHeroSearch = () => goSearch({
+    university: uni,
+    price_max_display: budget ? convertMoney(Number(budget), currency, 'GBP', fx) : '',
+    movein,
+  });
 
   return (
     <div>
-      <section className="relative min-h-[78vh] sm:min-h-[70vh] flex items-end sm:items-center overflow-hidden">
-        <div className="absolute inset-0">
-          <img src={config?.hero_image || '/logo.png'} alt="" className="h-full w-full object-cover scale-105" />
-          <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-r from-[#062636]/95 via-[#0a4d68]/78 to-[#0a4d68]/35" />
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_20%,rgba(224,162,86,0.18),transparent_55%)]" />
+      <section className="relative z-0 overflow-hidden text-white">
+        <div className="absolute inset-0 bg-[#052533] pointer-events-none">
+          {heroPhoto ? (
+            <Image
+              src={heroPhoto}
+              alt="Girne yat limanı, KKTC"
+              fill
+              priority
+              sizes="100vw"
+              className="object-cover object-[center_62%] sm:object-[center_55%]"
+            />
+          ) : (
+            <>
+              <div className="absolute inset-0 bg-[linear-gradient(165deg,#041820_0%,#0a4d68_42%,#0c6d7c_72%,#0a4558_100%)]" />
+              <div className="ko-hero-glow absolute -top-24 -end-16 h-80 w-80 rounded-full bg-[#e0a256]/35 blur-3xl" />
+              <div className="ko-hero-glow-slow absolute top-1/3 -start-20 h-64 w-64 rounded-full bg-[#7ec8d4]/25 blur-3xl" />
+              <div className="absolute inset-0 opacity-40" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.14) 1px, transparent 0)', backgroundSize: '28px 28px' }} />
+              <svg className="absolute bottom-0 inset-x-0 w-full h-28 sm:h-40 text-[#f6f4f0]" viewBox="0 0 1440 160" preserveAspectRatio="none" aria-hidden>
+                <path fill="currentColor" d="M0,96 C240,160 480,32 720,80 C960,128 1200,48 1440,96 L1440,160 L0,160 Z" />
+              </svg>
+            </>
+          )}
+          {heroPhoto && (
+            <>
+              <div className="absolute inset-0 bg-gradient-to-t from-[#041820]/90 via-[#041820]/45 to-[#041820]/20" />
+              <div className="absolute inset-0 bg-gradient-to-r from-[#041820]/75 via-[#041820]/25 to-transparent" />
+            </>
+          )}
         </div>
-        <div className="relative container py-14 md:py-20 w-full">
-          <div className="max-w-2xl text-white">
-            <p className="ko-display ko-fade-up text-2xl sm:text-3xl md:text-4xl font-semibold text-white/95 tracking-tight">
-              {t('brand')}
-            </p>
-            <h1 className="ko-fade-up-delay mt-3 text-3xl md:text-5xl font-bold leading-[1.12] text-white">
-              {t('hero.title')}
-            </h1>
-            <p className="ko-fade-up-delay-2 mt-4 text-white/85 text-base md:text-lg leading-relaxed max-w-xl">
-              {t('hero.subtitle')}
-            </p>
 
-            <div className="ko-fade-up-delay-2 mt-8 rounded-2xl bg-white/95 backdrop-blur p-3 sm:p-3.5 shadow-[0_24px_60px_-28px_rgba(6,38,54,0.65)] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_auto] gap-2">
-              <select value={uni} onChange={e => setUni(e.target.value)}
-                className="h-12 w-full min-w-0 rounded-xl border border-slate-200/90 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30">
-                <option value="">{t('search.any_university')}</option>
-                {unis.map(u => <option key={u.id} value={u.id}>{u.short} — {locale === 'tr' ? u.name_tr : u.name_en}</option>)}
-              </select>
-              <input type="number" value={budget} onChange={e => setBudget(e.target.value)} placeholder={`${t('search.budget')} (${SYMBOL[currency]})`}
-                className="h-12 w-full min-w-0 rounded-xl border border-slate-200/90 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
-              <input type="date" value={movein} onChange={e => setMovein(e.target.value)}
-                className="h-12 w-full min-w-0 rounded-xl border border-slate-200/90 px-3 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#0a4d68]/30" />
-              <button onClick={() => goSearch({ university: uni, price_max_display: budget ? convertMoney(Number(budget), currency, 'GBP', fx) : '', movein })}
-                className="ko-btn-accent h-12 w-full min-w-0 px-6 sm:col-span-2 lg:col-span-1">
-                <Search className="h-5 w-5" /> {t('search.button')}
-              </button>
+        <div className="relative container pt-10 pb-24 sm:pt-16 sm:pb-32 lg:pt-20 lg:pb-36">
+          <div className="grid lg:grid-cols-[1.15fr_0.85fr] gap-10 lg:gap-16 items-center">
+            <div className="max-w-xl">
+              <span className="ko-fade-up inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 backdrop-blur-md px-3 py-1.5 text-[11px] sm:text-xs font-semibold tracking-wide">
+                <Sparkles className="h-3.5 w-3.5 text-[#e0a256]" />
+                {t('hero.eyebrow')}
+              </span>
+              <h1 className="ko-fade-up-delay ko-display mt-4 text-[1.85rem] leading-[1.15] sm:text-4xl md:text-5xl lg:text-[3.35rem] font-semibold tracking-tight">
+                {t('hero.title')}
+              </h1>
+              <p className="ko-fade-up-delay-2 mt-4 text-white/78 text-[15px] sm:text-lg leading-relaxed">
+                {t('hero.subtitle')}
+              </p>
+              <div className="ko-fade-up-delay-2 mt-5 flex flex-wrap gap-2">
+                {[
+                  [BadgeCheck, t('trust.verified_badge')],
+                  [Footprints, t('home.walk_campus')],
+                  [TrendingDown, t('home.fair_price')],
+                ].map(([Icon, label]) => (
+                  <span key={label} className="inline-flex items-center gap-1.5 rounded-full bg-white/10 border border-white/10 px-2.5 py-1 text-[11px] sm:text-xs font-medium text-white/90">
+                    <Icon className="h-3.5 w-3.5 text-[#e0a256]" /> {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="hidden lg:block relative h-[420px] pointer-events-none">
+              {featured.slice(0, 3).map((l, i) => {
+                const poses = [
+                  'top-4 end-6 w-[72%] rotate-[-6deg]',
+                  'top-[28%] start-0 w-[68%] rotate-[5deg]',
+                  'bottom-2 end-10 w-[64%] rotate-[-2deg]',
+                ];
+                return (
+                  <div key={l.id || i} className={`absolute ${poses[i]} rounded-3xl overflow-hidden shadow-2xl shadow-black/40 ring-1 ring-white/20 bg-white/10 backdrop-blur-sm pointer-events-auto`}>
+                    <button type="button" onClick={() => goListing(l.reference_code)} className="block w-full text-start">
+                      <img src={listingPhoto(l, 0)} alt="" onError={(e) => { e.currentTarget.src = MOCK_PHOTOS[i % MOCK_PHOTOS.length]; }} className="h-44 w-full object-cover" />
+                      <div className="p-3 bg-[#052533]/80">
+                        <div className="text-xs text-white/70 truncate">{l.neighbourhood}, {l.city}</div>
+                        <div className="text-sm font-semibold truncate mt-0.5">{locale === 'tr' ? l.title_tr : l.title_en}</div>
+                      </div>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        </div>
-      </section>
 
-      <section className="container py-12 md:py-14">
-        <div className="flex items-end justify-between gap-3 mb-6">
-          <div>
-            <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54]">{FEATURED[locale] || FEATURED.en}</h2>
-            <p className="text-sm text-slate-500 mt-1">{t('tagline')}</p>
-          </div>
-          <button onClick={() => goSearch({})} className="text-sm font-semibold text-[#0a4d68] hover:underline shrink-0">
-            {t('nav.search')} →
-          </button>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {featured.map(l => <ListingCard key={l.id} l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />)}
+          <form
+            onSubmit={(e) => { e.preventDefault(); runHeroSearch(); }}
+            className="ko-fade-up-delay-2 mt-8 lg:mt-10 rounded-[1.75rem] bg-white p-3 sm:p-4 shadow-[0_28px_70px_-24px_rgba(4,24,32,0.55)] text-slate-800"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.35fr_1fr_1fr_auto] gap-2.5 sm:gap-3">
+              <label className="block">
+                <span className="mb-1.5 ms-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('search.university')}</span>
+                <select value={uni} onChange={e => setUni(e.target.value)} className={fieldCls}>
+                  <option value="">{t('search.any_university')}</option>
+                  {unis.map(u => <option key={u.id} value={u.id}>{u.short} — {locale === 'tr' ? u.name_tr : u.name_en}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 ms-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('search.budget')}</span>
+                <input inputMode="numeric" type="number" value={budget} onChange={e => setBudget(e.target.value)}
+                  placeholder={`${SYMBOL[currency]}`} className={fieldCls} />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 ms-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t('search.movein')}</span>
+                <input type="date" value={movein} onChange={e => setMovein(e.target.value)} className={fieldCls} />
+              </label>
+              <div className="flex items-end sm:col-span-2 lg:col-span-1">
+                <button type="submit" className="ko-btn-accent h-12 w-full rounded-2xl px-6 text-base shadow-sm">
+                  <Search className="h-5 w-5" /> {t('search.button')}
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2 ms-1">{t('home.browse_types')}</div>
+              <div className="flex gap-2 overflow-x-auto ko-hide-scroll pb-0.5 -mx-1 px-1">
+                {['apartment', 'studio', 'room', 'house'].map((p) => (
+                  <button key={p} type="button" onClick={() => goSearch({ property_type: p })}
+                    className="shrink-0 h-10 rounded-full border border-slate-200 bg-[#f6f4f0] px-4 text-sm font-semibold text-[#0a3d54] hover:bg-[#0a4d68] hover:text-white hover:border-[#0a4d68] transition-colors">
+                    {t(`ptype.${p}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </form>
         </div>
       </section>
 
       {stats && (
-        <section className="container pb-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <section className="container -mt-12 sm:-mt-16 relative z-10">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
             {[['listings', stats.listings], ['universities', stats.universities], ['verified_landlords', stats.verified_landlords], ['cities', stats.cities]].map(([k, v]) => (
-              <div key={k} className="ko-surface p-4 text-center">
-                <div className="ko-display text-2xl font-semibold text-[#0a4d68]">{v}</div>
-                <div className="text-xs text-slate-500 mt-0.5">{STAT[k]}</div>
+              <div key={k} className="rounded-2xl sm:rounded-3xl bg-white border border-[#0a3d54]/8 p-4 sm:p-5 text-center shadow-[0_12px_40px_-24px_rgba(10,61,84,0.35)]">
+                <div className="ko-display text-2xl sm:text-3xl font-semibold text-[#0a4d68] tabular-nums">{v}</div>
+                <div className="text-[11px] sm:text-xs text-slate-500 mt-1 leading-snug">{STAT[k]}</div>
               </div>
             ))}
           </div>
         </section>
       )}
 
-      <section className="py-14 mt-6 bg-gradient-to-b from-white to-[var(--ko-mist)]/40 border-y border-[#0a3d54]/8">
-        <div className="container">
-          <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54] text-center">{t('trust.how_title')}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-10">
+      <section className="container pt-14 md:pt-20">
+        <div className="flex items-end justify-between gap-3 mb-6">
+          <div className="min-w-0">
+            <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54]">{t('home.featured')}</h2>
+            <p className="text-sm text-slate-500 mt-1">{t('home.featured_sub')}</p>
+          </div>
+          <button onClick={() => goSearch({})} className="inline-flex items-center gap-1 text-sm font-semibold text-[#0a4d68] shrink-0 min-h-11">
+            {t('home.view_all')} <ArrowRight className="h-4 w-4 rtl:rotate-180" />
+          </button>
+        </div>
+        <div className="-mx-4 px-4 flex gap-4 overflow-x-auto snap-x snap-mandatory ko-hide-scroll pb-2 touch-pan-x sm:mx-0 sm:px-0 sm:grid sm:grid-cols-2 lg:grid-cols-3 sm:overflow-visible sm:pb-0">
+          {featuredLoading && (
+            <p className="text-sm text-slate-400 py-10 w-full text-center sm:col-span-3">{t('common.loading')}</p>
+          )}
+          {!featuredLoading && featured.length === 0 && (
+            <p className="text-sm text-slate-400 py-10 w-full text-center sm:col-span-3">{t('search.no_results') || 'Henüz yayınlanmış ilan yok.'}</p>
+          )}
+          {featured.map(l => (
+            <div key={l.id} className="min-w-[82%] snap-start sm:min-w-0">
+              <ListingCard l={l} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-16 md:mt-20 py-14 md:py-16 bg-[#0a3d54] text-white relative overflow-hidden">
+        <div className="absolute -top-24 -end-24 h-72 w-72 rounded-full bg-[#e0a256]/15 blur-3xl" />
+        <div className="absolute bottom-0 start-0 h-48 w-48 rounded-full bg-cyan-400/10 blur-3xl" />
+        <div className="container relative">
+          <div className="max-w-2xl">
+            <h2 className="ko-display text-2xl md:text-3xl font-semibold">{t('trust.how_title')}</h2>
+            <p className="text-white/70 mt-2 text-sm sm:text-base leading-relaxed">{t('home.how_sub')}</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-8">
             {t('trust.how_items').map((it, i) => {
-              const Icon = [BadgeCheck, TrendingDown, ShieldAlert, Clock][i];
+              const Icon = trustIcons[i];
               return (
-                <div key={i} className="text-center md:text-start">
-                  <div className="mx-auto md:mx-0 h-12 w-12 rounded-2xl bg-[var(--ko-mist)] flex items-center justify-center mb-3 ring-1 ring-[#0a4d68]/10">
-                    <Icon className="h-5 w-5 text-[#0a4d68]" />
+                <div key={i} className="rounded-3xl bg-white/8 border border-white/10 p-5 backdrop-blur-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="h-11 w-11 rounded-2xl bg-[#e0a256]/20 text-[#e0a256] flex items-center justify-center">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <span className="text-xs font-semibold text-white/40 tabular-nums">{t('home.step')} {i + 1}</span>
                   </div>
-                  <div className="font-semibold text-[#0a3d54]">{it.t}</div>
-                  <p className="text-sm text-slate-500 mt-1.5 leading-relaxed">{it.d}</p>
+                  <div className="font-semibold leading-snug">{it.t}</div>
+                  <p className="text-sm text-white/65 mt-2 leading-relaxed">{it.d}</p>
                 </div>
               );
             })}
@@ -493,25 +777,88 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
         </div>
       </section>
 
-      <section className="container py-14">
-        <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54] mb-6">{t('universities.title')}</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
-          {unis.map(u => (
+      <section className="container py-14 md:py-20">
+        <div className="flex items-end justify-between gap-3 mb-6">
+          <div>
+            <h2 className="ko-display text-2xl md:text-3xl font-semibold text-[#0a3d54]">{t('universities.title')}</h2>
+            <p className="text-sm text-slate-500 mt-1">{t('home.unis_sub')}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+          {unis.map((u, i) => (
             <button key={u.id} onClick={() => goUniversity(u.slug)}
-              className="ko-card text-start p-4 sm:p-5">
-              <div className="flex items-center gap-2 mb-2">
-                <GraduationCap className="h-5 w-5 text-[#0a4d68]" />
-                <span className="text-xs font-semibold text-[#0a4d68] bg-[var(--ko-mist)] rounded-md px-1.5 py-0.5">{u.short}</span>
+              className="group relative overflow-hidden rounded-3xl text-start min-h-[8.5rem] p-5 text-white shadow-md">
+              <div className={`absolute inset-0 bg-gradient-to-br ${uniTints[i % uniTints.length]}`} />
+              <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(circle at 80% 20%, white 0, transparent 40%)' }} />
+              <div className="relative flex flex-col h-full min-h-[6.5rem]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold tracking-wider bg-white/15 rounded-full px-2.5 py-1">{u.short}</span>
+                  <ChevronRight className="h-4 w-4 opacity-70 group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5 transition-transform" />
+                </div>
+                <div className="mt-auto pt-6">
+                  <div className="font-semibold leading-snug text-[15px] sm:text-base">{locale === 'tr' ? u.name_tr : u.name_en}</div>
+                  <div className="text-xs text-white/70 mt-1">{u.city} · {u.listings_count} {t('universities.listings_count')}</div>
+                </div>
               </div>
-              <div className="font-semibold text-[#0a3d54] leading-snug">{locale === 'tr' ? u.name_tr : u.name_en}</div>
-              <div className="text-xs text-slate-500 mt-1">{u.city} · {u.listings_count} {t('universities.listings_count')}</div>
             </button>
           ))}
         </div>
+
+        {cities.length > 0 && (
+          <div className="mt-10">
+            <h3 className="text-sm font-semibold text-slate-500 mb-3">{t('home.cities_title')}</h3>
+            <div className="flex gap-2 overflow-x-auto ko-hide-scroll -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
+              {cities.map((c) => (
+                <button key={c} type="button" onClick={() => goSearch({ city: c })}
+                  className="shrink-0 inline-flex items-center gap-2 h-11 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-[#0a3d54] hover:border-[#0a4d68] hover:bg-[#e8f2f6] transition-colors">
+                  <MapPin className="h-4 w-4 text-[#0a4d68]" /> {c}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
-      <section className="container pb-16">
-        <ScamBanner t={t} />
+      <section className="container pb-16 md:pb-20">
+        <div className="relative overflow-hidden rounded-[1.75rem] sm:rounded-[2rem] bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200/70 p-5 sm:p-8">
+          <div className="grid md:grid-cols-[1fr_auto] gap-6 items-center">
+            <div>
+              <div className="flex gap-3">
+                <div className="h-12 w-12 shrink-0 rounded-2xl bg-amber-100 flex items-center justify-center">
+                  <ShieldAlert className="h-6 w-6 text-amber-700" />
+                </div>
+                <div>
+                  <div className="font-semibold text-amber-950 text-lg">{t('scam.banner_title')}</div>
+                  <p className="text-sm sm:text-[15px] text-amber-900/80 mt-1 leading-relaxed">{t('scam.banner')}</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row md:flex-col gap-2 shrink-0">
+              <button onClick={() => setView({ name: 'scam' })}
+                className="h-11 px-5 rounded-2xl bg-amber-900 text-white font-semibold text-sm">
+                {t('nav.scam')}
+              </button>
+              <button onClick={() => goSearch({})}
+                className="h-11 px-5 rounded-2xl bg-white border border-amber-200 text-amber-950 font-semibold text-sm inline-flex items-center justify-center gap-1.5">
+                {t('hero.cta')} <ArrowRight className="h-4 w-4 rtl:rotate-180" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-[1.75rem] sm:rounded-[2rem] bg-[#0a4d68] text-white p-6 sm:p-10 overflow-hidden relative">
+          <div className="absolute -end-10 -top-10 h-40 w-40 rounded-full bg-[#e0a256]/25 blur-2xl" />
+          <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
+            <div className="max-w-lg">
+              <h2 className="ko-display text-2xl sm:text-3xl font-semibold">{t('home.cta_title')}</h2>
+              <p className="text-white/75 mt-2 text-sm sm:text-base leading-relaxed">{t('home.cta_sub')}</p>
+            </div>
+            <button onClick={() => goSearch({})}
+              className="h-12 sm:h-14 px-6 rounded-2xl bg-[#e0a256] text-[#3a2606] font-semibold inline-flex items-center justify-center gap-2 shrink-0 min-w-[11rem]">
+              {t('hero.cta')} <ArrowRight className="h-5 w-5 rtl:rotate-180" />
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   );
@@ -527,40 +874,52 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
   const cities = config?.cities || [];
   const [f, setF] = useState({
     university: initialFilters?.university || '',
-    city: '', property_type: '', bedrooms: '', gender: '',
+    city: initialFilters?.city || '', property_type: initialFilters?.property_type || '', bedrooms: '', gender: '',
     furnished: false, bills_included: false, verified_only: false,
     max_walk: '', price_min: '', price_max: initialFilters?.price_max_display || '',
     amenities: [], sort: 'new',
   });
-  const [items, setItems] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [searchErr, setSearchErr] = useState(false);
+  const [debouncedF, setDebouncedF] = useState(f);
 
-  const runSearch = useCallback(() => {
-    setLoading(true);
-    setSearchErr(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedF(f), 300);
+    return () => clearTimeout(timer);
+  }, [f]);
+
+  const searchKey = useMemo(() => {
     const p = new URLSearchParams();
-    if (f.university) p.set('university', f.university);
-    if (f.city) p.set('city', f.city);
-    if (f.property_type) p.set('property_type', f.property_type);
-    if (f.bedrooms !== '') p.set('bedrooms', f.bedrooms);
-    if (f.gender) p.set('gender', f.gender);
-    if (f.furnished) p.set('furnished', 'true');
-    if (f.bills_included) p.set('bills_included', 'true');
-    if (f.verified_only) p.set('verified_only', 'true');
-    if (f.max_walk) p.set('max_walk', f.max_walk);
-    if (f.amenities.length) p.set('amenities', f.amenities.join(','));
-    if (f.price_min) p.set('price_min', convertMoney(Number(f.price_min), currency, 'GBP', fx));
-    if (f.price_max) p.set('price_max', convertMoney(Number(f.price_max), currency, 'GBP', fx));
-    p.set('sort', f.sort);
-    api(`listings?${p.toString()}`).then(r => r.json()).then(d => {
-      setItems(d.items || []); setTotal(d.total || 0); setLoading(false);
-    }).catch(() => { setLoading(false); setSearchErr(true); setItems([]); setTotal(0); });
-  }, [f, currency, fx]);
+    if (debouncedF.university) p.set('university', debouncedF.university);
+    if (debouncedF.city) p.set('city', debouncedF.city);
+    if (debouncedF.property_type) p.set('property_type', debouncedF.property_type);
+    if (debouncedF.bedrooms !== '') p.set('bedrooms', debouncedF.bedrooms);
+    if (debouncedF.gender) p.set('gender', debouncedF.gender);
+    if (debouncedF.furnished) p.set('furnished', 'true');
+    if (debouncedF.bills_included) p.set('bills_included', 'true');
+    if (debouncedF.verified_only) p.set('verified_only', 'true');
+    if (debouncedF.max_walk) p.set('max_walk', debouncedF.max_walk);
+    if (debouncedF.amenities.length) p.set('amenities', debouncedF.amenities.join(','));
+    if (debouncedF.price_min) p.set('price_min', convertMoney(Number(debouncedF.price_min), currency, 'GBP', fx));
+    if (debouncedF.price_max) p.set('price_max', convertMoney(Number(debouncedF.price_max), currency, 'GBP', fx));
+    p.set('sort', debouncedF.sort);
+    p.set('limit', '48');
+    return p.toString();
+  }, [debouncedF, currency, fx]);
 
-  useEffect(() => { runSearch(); }, [runSearch]);
+  const { data, isFetching, isError, refetch } = useQuery({
+    queryKey: ['listings', searchKey],
+    queryFn: async () => {
+      const r = await api(`listings?${searchKey}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error('search_failed');
+      return { items: d.items || [], total: d.total || 0 };
+    },
+  });
+
+  const items = data?.items || [];
+  const total = data?.total || 0;
+  const loading = isFetching && !data;
+  const searchErr = isError;
 
   const toggleAmenity = (a) => setF(s => ({ ...s, amenities: s.amenities.includes(a) ? s.amenities.filter(x => x !== a) : [...s.amenities, a] }));
   const clear = () => setF({ university: '', city: '', property_type: '', bedrooms: '', gender: '', furnished: false, bills_included: false, verified_only: false, max_walk: '', price_min: '', price_max: '', amenities: [], sort: 'new' });
@@ -641,7 +1000,7 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
           ))}
         </div>
       </FilterField>
-      <button type="button" onClick={() => { setFiltersOpen(false); runSearch(); }} className="lg:hidden w-full h-11 rounded-xl bg-[#0a4d68] text-white font-semibold mt-2">
+      <button type="button" onClick={() => { setFiltersOpen(false); refetch(); }} className="lg:hidden w-full h-11 rounded-xl bg-[#0a4d68] text-white font-semibold mt-2">
         {t('search.button')}
       </button>
     </>
@@ -703,48 +1062,132 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
 // ---------------------------------------------------------------------------
 // Listing detail
 // ---------------------------------------------------------------------------
-function ListingView({ t, locale, currency, fx, refCode, setView, goListing, auth, setAuthModal, setReportModal }) {
-  const [l, setL] = useState(null);
+function ListingView({ t, locale, currency, fx, refCode, setView, goListing, auth, setAuth, setAuthModal, setReportModal }) {
   const [photoIdx, setPhotoIdx] = useState(0);
   const [reveal, setReveal] = useState(null);
   const [revealErr, setRevealErr] = useState('');
   const [showOriginal, setShowOriginal] = useState(false);
   const [saved, setSaved] = useState(false);
+  const thumbStripRef = useRef(null);
+  const [thumbCanScroll, setThumbCanScroll] = useState({ left: false, right: false });
+
+  const updateThumbScrollHints = useCallback(() => {
+    const el = thumbStripRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setThumbCanScroll({
+      left: el.scrollLeft > 4,
+      right: max > 4 && el.scrollLeft < max - 4,
+    });
+  }, []);
+
+  const scrollThumbs = useCallback((dir) => {
+    const el = thumbStripRef.current;
+    if (!el) return;
+    const step = Math.min(el.clientWidth * 0.75, 280);
+    el.scrollBy({ left: dir * step, behavior: 'smooth' });
+  }, []);
+
+  const { data: listingData, isLoading, isError } = useQuery({
+    queryKey: ['listing', refCode],
+    queryFn: async () => {
+      const r = await api(`listings/${refCode}`);
+      const d = await r.json();
+      if (!r.ok || d.error || !d.id) throw new Error('not_found');
+      return d;
+    },
+    enabled: !!refCode,
+  });
+
+  const l = isError ? { error: true } : (isLoading ? null : listingData);
 
   useEffect(() => {
-    setL(null);
+    setPhotoIdx(0);
+    setReveal(null);
+    setRevealErr('');
+    setShowOriginal(false);
     setSaved(false);
-    api(`listings/${refCode}`).then(async (r) => {
-      const d = await r.json();
-      if (!r.ok || d.error || !d.id) setL({ error: true });
-      else setL(d);
-      setPhotoIdx(0);
-      setReveal(null);
-    }).catch(() => setL({ error: true }));
   }, [refCode]);
 
   useEffect(() => {
+    const el = thumbStripRef.current;
+    if (!el) return undefined;
+    updateThumbScrollHints();
+    const onScroll = () => updateThumbScrollHints();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateThumbScrollHints) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro?.disconnect();
+    };
+  }, [l?.id, updateThumbScrollHints]);
+
+  useEffect(() => {
+    const strip = thumbStripRef.current;
+    if (!strip) return;
+    const active = strip.querySelector(`[data-thumb-idx="${photoIdx}"]`);
+    if (active?.scrollIntoView) {
+      active.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+    updateThumbScrollHints();
+  }, [photoIdx, updateThumbScrollHints]);
+
+  useEffect(() => {
     if (!auth?.signedIn || !l?.id) return;
+    let cancelled = false;
     api('my/saved').then((r) => r.json()).then((d) => {
-      setSaved((d.items || []).some((x) => x.id === l.id));
+      if (!cancelled) setSaved((d.items || []).some((x) => x.id === l.id));
     }).catch(() => {});
+    return () => { cancelled = true; };
   }, [auth?.signedIn, l?.id]);
 
   const doReveal = async () => {
     setRevealErr('');
-    if (!auth.signedIn) { setAuthModal(true); return; }
+    // Ensure we have a live session before calling the gated endpoint
+    const session = await refreshSessionIntoAuth(setAuth);
+    if (!session?.user) {
+      setAuthModal('signin');
+      return;
+    }
     const res = await api('reveal', {
       method: 'POST',
       body: JSON.stringify({ ref: refCode }),
     });
-    if (res.status === 401) { setAuthModal(true); return; }
+    if (res.status === 401) {
+      // One retry after forced refresh (stale token)
+      const again = await refreshSessionIntoAuth(setAuth);
+      if (!again?.user) {
+        setAuthModal('signin');
+        return;
+      }
+      const retry = await api('reveal', {
+        method: 'POST',
+        body: JSON.stringify({ ref: refCode }),
+      });
+      if (retry.status === 401) { setAuthModal('signin'); return; }
+      if (retry.status === 429) { setRevealErr(t('contact.limit')); return; }
+      if (!retry.ok) {
+        const errBody = await retry.json().catch(() => ({}));
+        if (errBody.error === 'not_found') setRevealErr(t('listing.not_found'));
+        else setRevealErr(t('contact.error'));
+        return;
+      }
+      setReveal(await retry.json());
+      return;
+    }
     if (res.status === 429) { setRevealErr(t('contact.limit')); return; }
-    if (!res.ok) { setRevealErr(t('contact.gated')); return; }
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      if (errBody.error === 'not_found') setRevealErr(t('listing.not_found'));
+      else setRevealErr(t('contact.error'));
+      return;
+    }
     setReveal(await res.json());
   };
 
   const toggleSave = async () => {
-    if (!auth.signedIn) { setAuthModal(true); return; }
+    if (!auth.signedIn) { setAuthModal('signin'); return; }
     if (!l?.id) return;
     const next = !saved;
     setSaved(next);
@@ -755,22 +1198,25 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
     if (!res.ok) setSaved(!next);
   };
 
-  if (l?.error || l === null) {
+  if (l === null) {
+    return <div className="container py-20 text-center text-slate-400">{t('common.loading')}</div>;
+  }
+  if (l?.error) {
     return (
       <div className="container py-20 text-center">
         <p className="text-slate-500 mb-4">{t('listing.not_found')}</p>
-        <button onClick={() => setView({ name: 'search', filters: {} })} className="h-11 px-5 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('listing.back')}</button>
+        <button type="button" onClick={() => setView({ name: 'search', filters: {} })} className="h-11 px-5 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('listing.back')}</button>
       </div>
     );
   }
-  if (!l) return <div className="container py-20 text-center text-slate-400">{t('common.loading')}</div>;
-
   const baseLang = listingLang(locale);
   const mt = isMachineTranslated(locale);
   const title = (mt && showOriginal) ? l.title_tr : (baseLang === 'tr' ? l.title_tr : l.title_en);
   const desc = (mt && showOriginal) ? l.description_tr : (baseLang === 'tr' ? l.description_tr : l.description_en);
   const pi = l.price_index;
-  const photos = Array.isArray(l.photos) && l.photos.length ? l.photos : ['/logo.svg'];
+  const photos = (Array.isArray(l.photos) && l.photos.length)
+    ? l.photos
+    : [listingPhoto(l, 0), listingPhoto(l, 1), listingPhoto(l, 2)];
   const totalFirstMonth = l.deposit && l.price?.currency === l.deposit.currency
     ? { amount: Number(l.price.amount) + Number(l.deposit.amount), currency: l.price.currency } : null;
   const daysConfirmed = l.last_confirmed_available_at
@@ -778,46 +1224,119 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
     : null;
 
   return (
-    <div className="container py-6">
-      <button onClick={() => setView({ name: 'search', filters: {} })} className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-[#0a4d68] mb-4">
-        <ChevronLeft className="h-4 w-4" /> {t('listing.back')}
+    <div className="container py-6 pb-28 lg:pb-10 max-w-full">
+      <button type="button" onClick={() => setView({ name: 'search', filters: {} })} className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-[#0a4d68] mb-4">
+        <ChevronLeft className="h-4 w-4 shrink-0" /> {t('listing.back')}
       </button>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] gap-6 lg:gap-8 items-start">
         {/* Left */}
-        <div>
+        <div className="min-w-0 space-y-5">
           {/* Gallery */}
-          <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white">
-            <div className="relative aspect-[16/10] bg-slate-100">
-              <img src={photos[photoIdx] || photos[0]} alt={title} className="h-full w-full object-cover" />
-              <div className="absolute top-3 start-3 flex gap-2">
+          <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white max-w-full">
+            <div className="relative aspect-[16/10] sm:aspect-[16/9] bg-slate-100">
+              <img
+                src={photos[photoIdx] || photos[0]}
+                alt={title || ''}
+                onError={(e) => { e.currentTarget.src = MOCK_PHOTOS[0]; }}
+                className="absolute inset-0 h-full w-full object-cover"
+                decoding="async"
+                fetchPriority="high"
+              />
+              <div className="absolute top-2.5 start-2.5 end-2.5 flex flex-wrap gap-1.5">
                 {l.landlord_verified && <VerifiedPill t={t} />}
                 {l.landlord_is_agency && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-white/90 text-slate-700 px-2.5 py-1 text-xs font-semibold">
                     <Building2 className="h-3.5 w-3.5" /> {t('listing.agency')}
                   </span>
                 )}
+                {photos.length > 1 && (
+                  <span className="ms-auto rounded-full bg-black/55 text-white px-2.5 py-1 text-[11px] font-semibold tabular-nums">
+                    {photoIdx + 1}/{photos.length}
+                  </span>
+                )}
               </div>
+              {photos.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Önceki"
+                    onClick={() => setPhotoIdx((i) => (i - 1 + photos.length) % photos.length)}
+                    className="absolute start-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-black/40 text-white flex items-center justify-center"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Sonraki"
+                    onClick={() => setPhotoIdx((i) => (i + 1) % photos.length)}
+                    className="absolute end-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-black/40 text-white flex items-center justify-center"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                </>
+              )}
             </div>
-            <div className="flex gap-2 p-2 overflow-x-auto">
-              {photos.map((p, i) => (
-                <button key={i} onClick={() => setPhotoIdx(i)}
-                  className={`h-16 w-24 shrink-0 rounded-lg overflow-hidden border-2 ${i === photoIdx ? 'border-[#0a4d68]' : 'border-transparent'}`}>
-                  <img src={p} alt="" className="h-full w-full object-cover" />
-                </button>
-              ))}
-            </div>
+            {photos.length > 1 && (
+              <div className="relative max-w-full">
+                {thumbCanScroll.left && (
+                  <button
+                    type="button"
+                    aria-label="Sola kaydır"
+                    onClick={() => scrollThumbs(-1)}
+                    className="absolute start-1 top-1/2 z-10 -translate-y-1/2 h-9 w-9 rounded-full bg-white/95 border border-slate-200 text-[#0a3d54] shadow-sm flex items-center justify-center"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                )}
+                {thumbCanScroll.right && (
+                  <button
+                    type="button"
+                    aria-label="Sağa kaydır"
+                    onClick={() => scrollThumbs(1)}
+                    className="absolute end-1 top-1/2 z-10 -translate-y-1/2 h-9 w-9 rounded-full bg-white/95 border border-slate-200 text-[#0a3d54] shadow-sm flex items-center justify-center"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                )}
+                <div
+                  ref={thumbStripRef}
+                  className="flex gap-2 p-2 overflow-x-auto overscroll-x-contain ko-hide-scroll touch-pan-x max-w-full scroll-smooth"
+                >
+                  {photos.map((p, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      data-thumb-idx={i}
+                      onClick={() => setPhotoIdx(i)}
+                      className={`h-14 w-20 sm:h-16 sm:w-24 shrink-0 rounded-lg overflow-hidden border-2 ${i === photoIdx ? 'border-[#0a4d68]' : 'border-transparent'}`}
+                    >
+                      <img
+                        src={p}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        onError={(e) => { e.currentTarget.src = MOCK_PHOTOS[i % MOCK_PHOTOS.length]; }}
+                        className="h-full w-full object-cover"
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Title + key facts */}
-          <div className="mt-5">
-            <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
-              <MapPin className="h-4 w-4" /> {l.neighbourhood}, {l.city}
-              <span className="text-slate-300">·</span>
-              <span className="text-xs bg-slate-100 rounded px-1.5 py-0.5">{t('listing.ref')}: {l.reference_code}</span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500 mb-1.5">
+              <span className="inline-flex items-center gap-1 min-w-0">
+                <MapPin className="h-4 w-4 shrink-0" />
+                <span className="truncate">{l.neighbourhood}, {l.city}</span>
+              </span>
+              <span className="text-xs bg-slate-100 rounded px-1.5 py-0.5 shrink-0">{t('listing.ref')}: {l.reference_code}</span>
             </div>
-            <div className="flex items-start justify-between gap-3">
-              <h1 className="text-2xl font-bold text-[#0a3d54] flex-1">{title}</h1>
+            <div className="flex items-start gap-3">
+              <h1 className="text-xl sm:text-2xl font-bold text-[#0a3d54] flex-1 min-w-0 break-words leading-snug">{title}</h1>
               <button
                 type="button"
                 onClick={toggleSave}
@@ -831,93 +1350,95 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
               <PriceIndexPill pi={pi} t={t} listing={l} />
               {l.room_share && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68]/10 text-[#0a4d68] px-2.5 py-1 text-xs font-semibold">
-                  <Users className="h-3.5 w-3.5" /> {t('listing.shared')} · +{l.flatmates} {t('listing.flatmates')}
+                  <Users className="h-3.5 w-3.5 shrink-0" /> {t('listing.shared')} · +{l.flatmates} {t('listing.flatmates')}
                 </span>
               )}
               {l.walking_minutes != null && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68] text-white px-2.5 py-1 text-xs font-semibold">
-                  <Waypoints className="h-3.5 w-3.5" /> {l.walking_minutes} dk {t('listing.walk_to')} ({l.university?.short || '—'})
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68] text-white px-2.5 py-1 text-xs font-semibold max-w-full">
+                  <Waypoints className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{l.walking_minutes} dk {t('listing.walk_to')} ({l.university?.short || '—'})</span>
                 </span>
               )}
               {daysConfirmed != null && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-[#dcfce7] text-[#15803d] px-2.5 py-1 text-xs font-medium">
-                  <Clock className="h-3.5 w-3.5" /> {daysConfirmed} {t('listing.confirmed')}
+                  <Clock className="h-3.5 w-3.5 shrink-0" /> {daysConfirmed} {t('listing.confirmed')}
                 </span>
               )}
             </div>
           </div>
 
           {/* Facts grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
             {[
               [BedDouble, l.property_type === 'room' ? t('listing.private_room') : (l.bedrooms > 0 ? `${l.bedrooms} ${t('listing.bedrooms_n')}` : t('ptype.studio'))],
               [Bath, `${l.bathrooms} ${t('listing.bathrooms_n')}`],
               [Maximize, l.size_sqm ? `${l.size_sqm} m²` : '—'],
               [Sofa, l.furnished ? t('listing.furnished_yes') : t('listing.furnished_no')],
             ].map(([Icon, label], i) => (
-              <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 flex items-center gap-2">
-                <Icon className="h-5 w-5 text-[#0a4d68]" />
-                <span className="text-sm text-slate-700">{label}</span>
+              <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 flex items-center gap-2 min-w-0">
+                <Icon className="h-5 w-5 text-[#0a4d68] shrink-0" />
+                <span className="text-sm text-slate-700 truncate">{label}</span>
               </div>
             ))}
           </div>
 
-          {/* Description with machine-translation note (RU/FR/AR handled later; TR/EN native) */}
-          <div className="mt-6">
+          {/* Description */}
+          <div className="min-w-0">
             <h2 className="font-bold text-[#0a3d54] mb-2">{t('listing.description')}</h2>
             {mt && (
-              <div className="mb-2 flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-1.5 text-xs text-slate-500">
-                <Info className="h-3.5 w-3.5" /> {t('listing.machine_translated')}
-                <button onClick={() => setShowOriginal(o => !o)} className="font-semibold text-[#0a4d68] underline">
+              <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg bg-slate-100 px-3 py-1.5 text-xs text-slate-500">
+                <Info className="h-3.5 w-3.5 shrink-0" /> {t('listing.machine_translated')}
+                <button type="button" onClick={() => setShowOriginal(o => !o)} className="font-semibold text-[#0a4d68] underline">
                   {showOriginal ? '↩' : t('listing.view_original')}
                 </button>
               </div>
             )}
-            <p lang={(mt && !showOriginal) ? 'en' : 'tr'} className="text-slate-600 leading-relaxed whitespace-pre-line">{desc}</p>
+            <p lang={(mt && !showOriginal) ? 'en' : 'tr'} className="text-slate-600 leading-relaxed whitespace-pre-line break-words">{desc}</p>
           </div>
 
           {/* Amenities */}
-          <div className="mt-6">
-            <h2 className="font-bold text-[#0a3d54] mb-3">{t('listing.amenities')}</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {l.amenities.map(a => {
-                const Icon = AMENITY[a]?.icon || Check;
-                const label = t(`amenity.${a}`);
-                return (
-                  <div key={a} className="flex items-center gap-2 text-sm text-slate-600">
-                    <div className="h-8 w-8 rounded-lg bg-[#e8f2f6] flex items-center justify-center">
-                      <Icon className="h-4 w-4 text-[#0a4d68]" />
-                    </div>
-                    {label === `amenity.${a}` ? (AMENITY[a]?.[locale] || AMENITY[a]?.en || a) : label}
-                  </div>
-                );
-              })}
+          {(l.amenities || []).length > 0 && (
+            <div className="min-w-0">
+              <h2 className="font-bold text-[#0a3d54] mb-3">{t('listing.amenities')}</h2>
+              <div className="flex flex-wrap gap-2">
+                {l.amenities.map((a) => {
+                  const Icon = AMENITY[a]?.icon || Check;
+                  const label = t(`amenity.${a}`);
+                  const text = label === `amenity.${a}` ? (AMENITY[a]?.[locale] || AMENITY[a]?.en || a) : label;
+                  return (
+                    <span key={a} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-slate-700 max-w-full">
+                      <Icon className="h-3.5 w-3.5 text-[#0a4d68] shrink-0" />
+                      <span className="truncate">{text}</span>
+                    </span>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Location */}
-          <div className="mt-6">
+          <div className="min-w-0">
             <h2 className="font-bold text-[#0a3d54] mb-2">{t('listing.location')}</h2>
             <MapCircle l={l} t={t} />
-            <p className="text-xs text-slate-500 mt-2 flex items-center gap-1.5"><Info className="h-3.5 w-3.5" /> {t('listing.approx_note')}</p>
+            <p className="text-xs text-slate-500 mt-2 flex items-start gap-1.5"><Info className="h-3.5 w-3.5 shrink-0 mt-0.5" /> {t('listing.approx_note')}</p>
           </div>
 
           {/* Price history */}
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="font-bold text-[#0a3d54] mb-2">{t('priceindex.history')}</h2>
-            <PriceHistoryChart history={l.price_history} currency={currency} fx={fx} locale={locale} t={t} />
-          </div>
+          {(l.price_history?.length > 0) && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 min-w-0 overflow-hidden">
+              <h2 className="font-bold text-[#0a3d54] mb-2">{t('priceindex.history')}</h2>
+              <PriceHistoryChart history={l.price_history} currency={currency} fx={fx} locale={locale} t={t} />
+            </div>
+          )}
 
-          {/* Report */}
-          <button onClick={() => setReportModal(l.reference_code)} className="mt-5 inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-red-500">
+          <button type="button" onClick={() => setReportModal(l.reference_code)} className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-red-500">
             <Flag className="h-4 w-4" /> {t('listing.report')}
           </button>
         </div>
 
-        {/* Right sticky sidebar */}
-        <div className="lg:sticky lg:top-24 h-fit space-y-4">
-          {/* Price + cost breakdown */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+        {/* Right sticky sidebar — stays visible while scrolling listing content */}
+        <aside className="min-w-0 w-full lg:sticky lg:top-20 xl:top-24 self-start space-y-4 lg:max-h-[calc(100dvh-5.5rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-0.5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 overflow-hidden">
             <PriceDisplay price={l.price} currency={currency} fx={fx} locale={locale} t={t} size="lg" />
             <div className="mt-4 border-t border-slate-100 pt-4 space-y-2 text-sm">
               <div className="font-semibold text-[#0a3d54] mb-1">{t('listing.cost_breakdown')}</div>
@@ -926,16 +1447,16 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
               <Row label={t('listing.bills')} value={l.bills_included ? t('listing.bills_included_short') : (l.bills_note || '—')} muted />
               <Row label={t('listing.agency_fee')} value={l.agency_fee_note || '—'} muted />
               {totalFirstMonth && (
-                <div className="flex items-center justify-between border-t border-slate-100 pt-2.5 mt-1">
-                  <span className="font-semibold text-[#0a3d54]">{t('listing.total_first_month')}</span>
-                  <span className="font-bold text-[#0a3d54]"><PriceInline price={totalFirstMonth} currency={currency} fx={fx} locale={locale} /></span>
+                <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-2.5 mt-1">
+                  <span className="font-semibold text-[#0a3d54] shrink-0">{t('listing.total_first_month')}</span>
+                  <span className="font-bold text-[#0a3d54] text-end min-w-0 break-words"><PriceInline price={totalFirstMonth} currency={currency} fx={fx} locale={locale} /></span>
                 </div>
               )}
             </div>
             {pi?.enough && (
-              <div className="mt-4 rounded-xl bg-[#f8fafc] border border-slate-100 p-3">
+              <div className="mt-4 rounded-xl bg-[#f8fafc] border border-slate-100 p-3 min-w-0">
                 <div className="text-xs font-semibold text-slate-500 mb-1">{t('priceindex.title')}</div>
-                <div className="text-sm text-slate-700">
+                <div className="text-sm text-slate-700 break-words">
                   {pi.position === 'below' && <span className="text-[#15803d] font-semibold">{t('priceindex.below', { n: pi.pct })}</span>}
                   {pi.position === 'above' && <span className="text-amber-700 font-semibold">{t('priceindex.above', { n: pi.pct })}</span>}
                   {pi.position === 'at' && <span className="font-semibold">{t('priceindex.at')}</span>}
@@ -947,24 +1468,23 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
             )}
           </div>
 
-          {/* Contact gating */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 overflow-hidden">
             <h3 className="font-bold text-[#0a3d54] mb-1 flex items-center gap-2">
-              <Phone className="h-4 w-4" /> {t('contact.title')}
+              <Phone className="h-4 w-4 shrink-0" /> {t('contact.title')}
             </h3>
             {reveal ? (
               <div className="mt-3 space-y-2">
-                <div className="rounded-xl bg-[#e8f2f6] p-3 text-center">
-                  <div className="text-xs text-slate-500">{l.landlord_name}</div>
-                  <div className="text-lg font-bold text-[#0a3d54]" dir="ltr">{reveal.phone}</div>
+                <div className="rounded-xl bg-[#e8f2f6] p-3 text-center min-w-0">
+                  <div className="text-xs text-slate-500 truncate">{l.landlord_name}</div>
+                  <div className="text-lg font-bold text-[#0a3d54] break-all" dir="ltr">{reveal.phone}</div>
                 </div>
                 <a href={reveal.whatsapp_url} target="_blank" rel="noreferrer"
                   className="flex items-center justify-center gap-2 h-11 rounded-xl bg-[#25D366] text-white font-semibold">
-                  <MessageCircle className="h-5 w-5" /> {t('contact.whatsapp')}
+                  <MessageCircle className="h-5 w-5 shrink-0" /> {t('contact.whatsapp')}
                 </a>
                 <a href={`tel:${reveal.phone.replace(/\s/g, '')}`}
                   className="flex items-center justify-center gap-2 h-11 rounded-xl border border-slate-200 text-slate-700 font-semibold">
-                  <Phone className="h-4 w-4" /> {t('contact.call')}
+                  <Phone className="h-4 w-4 shrink-0" /> {t('contact.call')}
                 </a>
               </div>
             ) : (
@@ -975,9 +1495,9 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                     <Lock className="h-5 w-5 text-slate-400" />
                   </div>
                 </div>
-                <p className="text-xs text-slate-500 mb-3">{t('contact.gated_desc')}</p>
+                <p className="text-xs text-slate-500 mb-3 break-words">{t('contact.gated_desc')}</p>
                 {revealErr && <p className="text-xs text-red-600 mb-2">{revealErr}</p>}
-                <button onClick={doReveal}
+                <button type="button" onClick={doReveal}
                   className="w-full h-11 rounded-xl bg-[#0a4d68] hover:bg-[#08415c] text-white font-semibold">
                   {auth.signedIn ? t('contact.reveal') : t('contact.signin_to_reveal')}
                 </button>
@@ -986,29 +1506,27 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
           </div>
 
           <ScamBanner t={t} compact />
-        </div>
+        </aside>
       </div>
 
-      {/* Similar */}
       {l.similar?.length > 0 && (
-        <div className="mt-12 mb-20 lg:mb-0">
+        <div className="mt-10 sm:mt-12 mb-4 min-w-0">
           <h2 className="text-xl font-bold text-[#0a3d54] mb-5">{t('listing.similar')}</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
             {l.similar.map(s => <ListingCard key={s.id} l={s} t={t} locale={locale} currency={currency} fx={fx} onOpen={goListing} />)}
           </div>
         </div>
       )}
 
-      {/* Mobile sticky contact */}
-      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur px-4 py-3 safe-pb">
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         {reveal ? (
           <a href={reveal.whatsapp_url} target="_blank" rel="noreferrer"
-            className="flex items-center justify-center gap-2 h-12 rounded-xl bg-[#25D366] text-white font-semibold">
-            <MessageCircle className="h-5 w-5" /> {t('contact.whatsapp')}
+            className="flex items-center justify-center gap-2 h-12 rounded-xl bg-[#25D366] text-white font-semibold w-full max-w-lg mx-auto">
+            <MessageCircle className="h-5 w-5 shrink-0" /> {t('contact.whatsapp')}
           </a>
         ) : (
-          <button onClick={doReveal}
-            className="w-full h-12 rounded-xl bg-[#0a4d68] text-white font-semibold">
+          <button type="button" onClick={doReveal}
+            className="w-full max-w-lg mx-auto h-12 rounded-xl bg-[#0a4d68] text-white font-semibold block">
             {auth.signedIn ? t('contact.reveal') : t('contact.signin_to_reveal')}
           </button>
         )}
@@ -1019,9 +1537,9 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
 
 function Row({ label, value, muted }) {
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-slate-500">{label}</span>
-      <span className={muted ? 'text-slate-500 text-right text-xs' : 'text-slate-800 font-medium text-right'}>{value}</span>
+    <div className="flex items-start justify-between gap-3 min-w-0">
+      <span className="text-slate-500 shrink-0">{label}</span>
+      <span className={`min-w-0 text-end break-words ${muted ? 'text-slate-500 text-xs' : 'text-slate-800 font-medium'}`}>{value}</span>
     </div>
   );
 }
@@ -1139,9 +1657,11 @@ function Footer({ t, config, setView, goUniversity }) {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(10,77,104,0.55),transparent_50%)]" />
       <div className="relative container py-12 grid grid-cols-1 md:grid-cols-4 gap-8">
         <div className="md:col-span-2">
-          <div className="flex items-center gap-2.5 mb-3">
-            <img src="/logo.png" alt={t('brand')} className="h-11 w-11 object-contain bg-white rounded-xl p-1" />
-            <span className="ko-display font-semibold text-white text-xl">{t('brand')}</span>
+          <div className="mb-4 inline-flex rounded-2xl bg-white px-3 py-2 shadow-sm shadow-black/20">
+            <BrandMark
+              title={t('brand')}
+              className="h-12 sm:h-14 w-auto max-w-[min(70vw,240px)]"
+            />
           </div>
           <p className="text-sm leading-relaxed max-w-md text-white/70">{t('footer.about')}</p>
         </div>
@@ -1172,10 +1692,12 @@ function Footer({ t, config, setView, goUniversity }) {
 // ---------------------------------------------------------------------------
 // Modals
 // ---------------------------------------------------------------------------
-function AuthModal({ t, onClose, setAuth }) {
-  const [mode, setMode] = useState('signin');
+function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
+  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [password2, setPassword2] = useState('');
+  const [showPass, setShowPass] = useState(false);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [city, setCity] = useState('Girne');
@@ -1184,23 +1706,65 @@ function AuthModal({ t, onClose, setAuth }) {
   const [role, setRole] = useState('student');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [msgOk, setMsgOk] = useState(false);
+  const [awaitingEmail, setAwaitingEmail] = useState(false);
 
-  const inp = 'w-full h-11 rounded-xl border border-slate-200/90 bg-white px-3 text-sm mt-1 outline-none focus:ring-2 focus:ring-[#0a4d68]/25';
+  const inp = 'w-full h-12 rounded-2xl border border-slate-200/90 bg-[#f8fafb] px-3.5 text-sm mt-1.5 outline-none focus:bg-white focus:ring-2 focus:ring-[#0a4d68]/25 focus:border-[#0a4d68]/35 transition';
+  const siteUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000');
+
+  const mapAuthError = (error) => {
+    const raw = String(error?.message || error || '');
+    const lower = raw.toLowerCase();
+    if (lower.includes('invalid login credentials') || lower.includes('invalid_credentials')) {
+      return t('auth.err_invalid');
+    }
+    if (lower.includes('email not confirmed') || lower.includes('not confirmed')) {
+      return t('auth.err_unconfirmed');
+    }
+    return raw || t('auth.err');
+  };
+
+  const validate = (authMode) => {
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return t('auth.err_email');
+    if (authMode === 'reset') return null;
+    if (!password || password.length < 8) return t('auth.err_password');
+    if (authMode !== 'signup') return null;
+    if (password !== password2) return t('auth.err_password_match');
+    if (!fullName.trim() || fullName.trim().length < 2) return t('auth.err_name');
+    if (!phone.trim() || phone.replace(/\D/g, '').length < 10) return t('auth.err_phone');
+    if (role === 'landlord' && isAgency && !agencyName.trim()) return t('auth.err_agency');
+    return null;
+  };
+
+  const sendPasswordReset = async () => {
+    const supabase = createClient();
+    if (!supabase) { setMsg(t('auth.err_config')); setMsgOk(false); return; }
+    const v = validate('reset');
+    if (v) { setMsg(v); setMsgOk(false); return; }
+    setBusy(true); setMsg(''); setMsgOk(false);
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${siteUrl}/`,
+    });
+    setBusy(false);
+    if (error) { setMsg(mapAuthError(error)); setMsgOk(false); return; }
+    setMsg(t('auth.reset_sent'));
+    setMsgOk(true);
+  };
 
   const realAuth = async (authMode) => {
     const supabase = createClient();
-    if (!supabase) { setMsg(t('auth.err_config')); return; }
-    setBusy(true); setMsg('');
+    if (!supabase) { setMsg(t('auth.err_config')); setMsgOk(false); return; }
+    const v = validate(authMode);
+    if (v) { setMsg(v); setMsgOk(false); return; }
+
+    setBusy(true); setMsg(''); setMsgOk(false);
     try {
       if (authMode === 'signup') {
-        if (!fullName.trim() || fullName.trim().length < 2) { setMsg(t('auth.err_name')); setBusy(false); return; }
-        if (!phone.trim() || phone.replace(/\D/g, '').length < 10) { setMsg(t('auth.err_phone')); setBusy(false); return; }
-        if (role === 'landlord' && isAgency && !agencyName.trim()) { setMsg(t('auth.err_agency')); setBusy(false); return; }
-
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: email.trim().toLowerCase(),
           password,
           options: {
+            emailRedirectTo: `${siteUrl}/`,
             data: {
               role,
               full_name: fullName.trim(),
@@ -1208,10 +1772,11 @@ function AuthModal({ t, onClose, setAuth }) {
               city,
               is_agency: isAgency,
               agency_name: agencyName.trim() || null,
+              preferred_language: locale || 'tr',
             },
           },
         });
-        if (error) { setMsg(error.message); setBusy(false); return; }
+        if (error) { setMsg(mapAuthError(error)); setBusy(false); return; }
         if (data.session) {
           setAccessToken(data.session.access_token);
           const profilePayload = {
@@ -1224,9 +1789,9 @@ function AuthModal({ t, onClose, setAuth }) {
             request_verification: role === 'landlord',
           };
           if (role === 'landlord') {
-            await api('my/become-landlord', { method: 'POST', body: JSON.stringify(profilePayload) });
+            await api('my/become-landlord', { method: 'POST', body: JSON.stringify(profilePayload) }).catch(() => {});
           } else {
-            await api('my/profile', { method: 'POST', body: JSON.stringify(profilePayload) });
+            await api('my/profile', { method: 'POST', body: JSON.stringify(profilePayload) }).catch(() => {});
           }
           setAuth({
             signedIn: true,
@@ -1237,17 +1802,23 @@ function AuthModal({ t, onClose, setAuth }) {
           });
           onClose();
         } else {
+          setAwaitingEmail(true);
           setMsg(t('auth.check_email'));
+          setMsgOk(true);
         }
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) { setMsg(t('auth.err')); setBusy(false); return; }
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password,
+        });
+        if (error) { setMsg(mapAuthError(error)); setBusy(false); return; }
         setAccessToken(data.session.access_token);
+        const metaRole = data.user.app_metadata?.role || data.user.user_metadata?.role || 'student';
         setAuth({
           signedIn: true,
           studentId: data.user.id,
           email: data.user.email,
-          role: data.user.app_metadata?.role || 'student',
+          role: metaRole,
           accessToken: data.session.access_token,
         });
         onClose();
@@ -1256,54 +1827,105 @@ function AuthModal({ t, onClose, setAuth }) {
     setBusy(false);
   };
 
-  return (
-    <Overlay onClose={onClose}>
-      <h2 className="ko-display text-xl font-semibold text-[#0a3d54]">{t('auth.title')}</h2>
-      <p className="text-xs text-slate-600 bg-[var(--ko-mist)] rounded-xl px-3 py-2 mt-2">{t('auth.note')}</p>
+  if (awaitingEmail) {
+    return (
+      <Overlay onClose={onClose} wide>
+        <div className="text-center py-4 sm:py-6">
+          <div className="mx-auto h-14 w-14 rounded-2xl bg-[#e8f2f6] text-[#0a4d68] flex items-center justify-center mb-4">
+            <Mail className="h-7 w-7" />
+          </div>
+          <h2 className="ko-display text-xl font-semibold text-[#0a3d54]">{t('auth.check_email_title')}</h2>
+          <p className="text-sm text-slate-600 mt-2 leading-relaxed px-2">{t('auth.check_email')}</p>
+          <p className="text-xs text-slate-400 mt-2" dir="ltr">{email}</p>
+          <button type="button" onClick={() => { setAwaitingEmail(false); setMode('signin'); setMsg(''); }}
+            className="mt-6 w-full h-12 rounded-2xl bg-[#0a4d68] text-white font-semibold">
+            {t('auth.signin')}
+          </button>
+          <button type="button" onClick={() => { setAwaitingEmail(false); setMsg(''); }}
+            className="mt-2 w-full h-11 rounded-2xl text-sm font-medium text-slate-500">
+            {t('auth.back_to_form')}
+          </button>
+        </div>
+      </Overlay>
+    );
+  }
 
-      <div className="mt-4 grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100">
+  return (
+    <Overlay onClose={onClose} wide>
+      <div className="pe-8">
+        <h2 className="ko-display text-xl sm:text-2xl font-semibold text-[#0a3d54]">
+          {mode === 'signup' ? t('auth.signup_title') : t('auth.signin_title')}
+        </h2>
+        <p className="text-sm text-slate-500 mt-1">
+          {mode === 'signup' ? t('auth.signup_sub') : t('auth.signin_sub')}
+        </p>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-100">
         {[['signin', t('auth.signin')], ['signup', t('auth.signup')]].map(([k, label]) => (
-          <button key={k} type="button" onClick={() => { setMode(k); setMsg(''); }}
-            className={`h-9 rounded-lg text-sm font-semibold transition ${mode === k ? 'bg-white text-[#0a4d68] shadow-sm' : 'text-slate-500'}`}>
+          <button key={k} type="button" onClick={() => { setMode(k); setMsg(''); setMsgOk(false); }}
+            className={`h-10 rounded-xl text-sm font-semibold transition ${mode === k ? 'bg-white text-[#0a4d68] shadow-sm' : 'text-slate-500'}`}>
             {label}
           </button>
         ))}
       </div>
 
-      <div className="mt-4 space-y-3 max-h-[65vh] overflow-y-auto pe-1">
+      <form
+        className="mt-4 space-y-3.5 max-h-[min(62vh,520px)] overflow-y-auto pe-1 -me-1"
+        onSubmit={(e) => { e.preventDefault(); realAuth(mode); }}
+      >
         {mode === 'signup' && (
           <>
             <div>
               <label className="text-xs font-semibold text-slate-500">{t('auth.role')}</label>
-              <div className="mt-1 grid grid-cols-2 gap-2">
-                {[['student', t('auth.student')], ['landlord', t('auth.landlord')]].map(([k, label]) => (
+              <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[
+                  ['student', t('auth.student'), t('auth.student_hint'), GraduationCap, true],
+                  ['landlord', t('auth.landlord'), t('auth.landlord_hint'), Building2, false],
+                ].map(([k, label, hint, Icon, free]) => (
                   <button key={k} type="button" onClick={() => setRole(k)}
-                    className={`h-10 rounded-xl text-sm font-semibold border ${role === k ? 'bg-[#0a4d68] text-white border-[#0a4d68]' : 'bg-white text-slate-600 border-slate-200'}`}>
-                    {label}
+                    className={`relative text-start rounded-2xl border p-3.5 transition ${role === k ? 'border-[#0a4d68] bg-[#e8f2f6] ring-1 ring-[#0a4d68]/25' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                    {free && (
+                      <span className="absolute top-2.5 end-2.5 text-[10px] font-bold uppercase tracking-wide text-[#15803d] bg-[#dcfce7] px-1.5 py-0.5 rounded-md">
+                        {t('auth.free_badge')}
+                      </span>
+                    )}
+                    <div className={`h-9 w-9 rounded-xl flex items-center justify-center ${role === k ? 'bg-[#0a4d68] text-white' : 'bg-slate-100 text-slate-500'}`}>
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="font-semibold text-[#0a3d54] mt-2 text-sm">{label}</div>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">{hint}</p>
                   </button>
                 ))}
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">{t('auth.role_hint')}</p>
             </div>
+
             <div>
               <label className="text-xs font-semibold text-slate-500">{t('auth.full_name')} *</label>
-              <input value={fullName} onChange={e => setFullName(e.target.value)} autoComplete="name" className={inp} placeholder={t('auth.ph_name')} />
+              <div className="relative">
+                <User className="absolute start-3.5 top-[1.35rem] h-4 w-4 text-slate-400 pointer-events-none" />
+                <input value={fullName} onChange={e => setFullName(e.target.value)} autoComplete="name"
+                  className={`${inp} ps-10`} placeholder={t('auth.ph_name')} />
+              </div>
             </div>
             <div>
               <label className="text-xs font-semibold text-slate-500">{t('auth.phone')} *</label>
-              <input dir="ltr" value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel" className={inp} placeholder="+90 533 ..." />
+              <input dir="ltr" value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel"
+                className={inp} placeholder="+90 533 ..." inputMode="tel" />
               <p className="text-[11px] text-slate-400 mt-1">{t('auth.phone_hint')}</p>
             </div>
+
             {role === 'landlord' && (
-              <>
+              <div className="space-y-3 rounded-2xl border border-amber-100 bg-amber-50/60 p-3.5">
                 <div>
                   <label className="text-xs font-semibold text-slate-500">{t('auth.city')}</label>
                   <select value={city} onChange={e => setCity(e.target.value)} className={inp}>
                     {['Girne', 'Lefkoşa', 'Gazimağusa', 'Güzelyurt', 'İskele'].map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={isAgency} onChange={e => setIsAgency(e.target.checked)} />
+                <label className="flex items-center gap-2.5 text-sm text-slate-700 min-h-11">
+                  <input type="checkbox" checked={isAgency} onChange={e => setIsAgency(e.target.checked)}
+                    className="h-4 w-4 rounded accent-[#0a4d68]" />
                   {t('auth.is_agency')}
                 </label>
                 {isAgency && (
@@ -1312,38 +1934,79 @@ function AuthModal({ t, onClose, setAuth }) {
                     <input value={agencyName} onChange={e => setAgencyName(e.target.value)} className={inp} />
                   </div>
                 )}
-                <p className="text-[11px] leading-relaxed text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
-                  {t('auth.verify_note')}
-                </p>
-              </>
+                <p className="text-[11px] leading-relaxed text-amber-900/80">{t('auth.verify_note')}</p>
+              </div>
             )}
           </>
         )}
+
         <div>
-          <label className="text-xs font-semibold text-slate-500">{t('auth.email')}</label>
-          <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" className={inp} />
+          <label className="text-xs font-semibold text-slate-500">{t('auth.email')} *</label>
+          <div className="relative">
+            <Mail className="absolute start-3.5 top-[1.35rem] h-4 w-4 text-slate-400 pointer-events-none" />
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email"
+              className={`${inp} ps-10`} placeholder={t('auth.ph_email')} dir="ltr" />
+          </div>
         </div>
         <div>
-          <label className="text-xs font-semibold text-slate-500">{t('auth.password')}</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} className={inp} />
+          <label className="text-xs font-semibold text-slate-500">{t('auth.password')} *</label>
+          <div className="relative">
+            <input type={showPass ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              className={`${inp} pe-11`} placeholder={t('auth.ph_password')} dir="ltr" />
+            <button type="button" onClick={() => setShowPass(s => !s)}
+              className="absolute end-2 top-[0.85rem] h-9 w-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-600"
+              aria-label="Toggle password">
+              {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
-        {msg && <p className="text-xs text-slate-700 bg-slate-100 rounded-xl px-3 py-2">{msg}</p>}
-        <button disabled={busy} onClick={() => realAuth(mode)}
-          className="w-full h-11 rounded-xl bg-[#0a4d68] text-white font-semibold disabled:opacity-60 shadow-sm shadow-[#0a4d68]/20">
+        {mode === 'signup' && (
+          <div>
+            <label className="text-xs font-semibold text-slate-500">{t('auth.password_confirm')} *</label>
+            <input type={showPass ? 'text' : 'password'} value={password2} onChange={e => setPassword2(e.target.value)}
+              autoComplete="new-password" className={inp} dir="ltr" />
+          </div>
+        )}
+
+        {msg && (
+          <p className={`text-xs rounded-2xl px-3 py-2.5 leading-relaxed ${msgOk ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-red-50 text-red-700'}`}>
+            {msg}
+          </p>
+        )}
+
+        {mode === 'signin' && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            <button type="button" disabled={busy} onClick={sendPasswordReset}
+              className="font-semibold text-[#0a4d68] hover:underline disabled:opacity-50">
+              {t('auth.forgot_password')}
+            </button>
+          </div>
+        )}
+
+        <button type="submit" disabled={busy}
+          className="w-full h-12 rounded-2xl bg-[#0a4d68] text-white font-semibold disabled:opacity-60 shadow-sm shadow-[#0a4d68]/20 inline-flex items-center justify-center gap-2">
           {busy ? t('common.loading') : (mode === 'signup' ? t('auth.signup') : t('auth.signin'))}
+          {!busy && <ArrowRight className="h-4 w-4 rtl:rotate-180" />}
         </button>
+
+        <button type="button" onClick={() => { setMode(mode === 'signup' ? 'signin' : 'signup'); setMsg(''); }}
+          className="w-full text-center text-sm font-medium text-[#0a4d68] py-1">
+          {mode === 'signup' ? t('auth.switch_signin') : t('auth.switch_signup')}
+        </button>
+
         {ALLOW_DEMO_AUTH && (
-          <button
+          <button type="button"
             onClick={() => {
               setAuth({ signedIn: true, studentId: `demo-${Math.random().toString(36).slice(2, 8)}`, email: email || 'student@demo', role });
               onClose();
             }}
-            className="w-full h-11 rounded-xl border border-slate-200 text-slate-600 font-semibold"
+            className="w-full h-11 rounded-2xl border border-slate-200 text-slate-600 font-semibold text-sm"
           >
             {t('auth.as_student')}
           </button>
         )}
-      </div>
+      </form>
     </Overlay>
   );
 }
@@ -1359,7 +2022,7 @@ function SavedView({ t, locale, currency, fx, goListing, auth, setAuthModal }) {
     return (
       <div className="container py-16 text-center">
         <p className="text-slate-600 mb-4">{t('contact.gated')}</p>
-        <button onClick={() => setAuthModal(true)} className="h-11 px-5 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('nav.signin')}</button>
+        <button onClick={() => setAuthModal('signin')} className="h-11 px-5 rounded-xl bg-[#0a4d68] text-white font-semibold">{t('nav.signin')}</button>
       </div>
     );
   }
@@ -1405,7 +2068,7 @@ function ReportModal({ t, refCode, onClose }) {
               <label className="text-xs font-semibold text-slate-500">{t('report.reason')}</label>
               <select value={reason} onChange={e => setReason(e.target.value)}
                 className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm mt-1 outline-none">
-                {Object.keys(messages.tr.report.reasons).map(k => <option key={k} value={k}>{t(`report.reasons.${k}`)}</option>)}
+                {REPORT_REASONS.map(k => <option key={k} value={k}>{t(`report.reasons.${k}`)}</option>)}
               </select>
             </div>
             <div>
@@ -1421,11 +2084,16 @@ function ReportModal({ t, refCode, onClose }) {
   );
 }
 
-function Overlay({ children, onClose }) {
+function Overlay({ children, onClose, wide }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-[#062636]/55 backdrop-blur-[2px]" onClick={onClose}>
-      <div className="bg-white rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 w-full max-w-md relative shadow-2xl shadow-black/20 max-h-[92vh] overflow-hidden" onClick={e => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute top-4 end-4 h-8 w-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-700 flex items-center justify-center"><X className="h-4 w-4" /></button>
+    <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-[#062636]/55 backdrop-blur-[2px]" onClick={onClose}>
+      <div
+        className={`bg-white rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 w-full relative shadow-2xl shadow-black/20 max-h-[92vh] overflow-hidden ${wide ? 'max-w-lg' : 'max-w-md'}`}
+        onClick={e => e.stopPropagation()}
+      >
+        <button type="button" onClick={onClose} className="absolute top-4 end-4 z-10 h-9 w-9 rounded-full bg-slate-100 text-slate-500 hover:text-slate-700 flex items-center justify-center" aria-label="Close">
+          <X className="h-4 w-4" />
+        </button>
         {children}
       </div>
     </div>

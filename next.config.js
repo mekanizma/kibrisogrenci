@@ -1,7 +1,11 @@
+const path = require('path');
+
 const allowedOrigins = (process.env.CORS_ORIGINS || process.env.NEXT_PUBLIC_SITE_URL || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+
+const isProd = process.env.NODE_ENV === 'production';
 
 const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },
@@ -9,23 +13,24 @@ const securityHeaders = [
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
   { key: 'X-DNS-Prefetch-Control', value: 'on' },
-  {
+];
+
+// Strict CSP only in production — Next.js dev needs unsafe-eval for hydration/HMR.
+if (isProd) {
+  securityHeaders.push({
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
       "img-src 'self' data: blob: https:",
-      "style-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline' https://unpkg.com",
       "script-src 'self' 'unsafe-inline'",
       "font-src 'self' data:",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
     ].join('; '),
-  },
-];
-
-if (process.env.NODE_ENV === 'production') {
+  });
   securityHeaders.push({
     key: 'Strict-Transport-Security',
     value: 'max-age=63072000; includeSubDomains; preload',
@@ -34,27 +39,24 @@ if (process.env.NODE_ENV === 'production') {
 
 const nextConfig = {
   output: 'standalone',
+  outputFileTracingRoot: path.join(__dirname),
+  // Hide the Next.js DevTools badge/portal in local development.
+  devIndicators: false,
   images: {
-    unoptimized: true,
+    formats: ['image/avif', 'image/webp'],
+    deviceSizes: [640, 750, 828, 1080, 1200, 1600],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+    minimumCacheTTL: 60 * 60 * 24 * 7,
     remotePatterns: [
       { protocol: 'https', hostname: '**.supabase.co', pathname: '/storage/v1/object/**' },
       { protocol: 'https', hostname: 'images.unsplash.com', pathname: '/**' },
+      { protocol: 'https', hostname: 'images.pexels.com', pathname: '/**' },
     ],
   },
   serverExternalPackages: ['mongodb'],
-  webpack(config, { dev }) {
-    if (dev) {
-      config.watchOptions = {
-        poll: 2000,
-        aggregateTimeout: 300,
-        ignored: ['**/node_modules'],
-      };
-    }
-    return config;
-  },
   onDemandEntries: {
-    maxInactiveAge: 10000,
-    pagesBufferLength: 2,
+    maxInactiveAge: 60_000,
+    pagesBufferLength: 4,
   },
   async headers() {
     const headers = [...securityHeaders];

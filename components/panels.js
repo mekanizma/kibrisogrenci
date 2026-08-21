@@ -1,14 +1,19 @@
 'use client';
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import {
   Plus, Eye, Phone, CreditCard, CheckCircle2, XCircle,
   ShieldAlert, Activity, Building2, Send, Bot,
   BadgeCheck, AlertTriangle, Banknote, X, ImagePlus,
   Pencil, Trash2,
 } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { api as apiFetch, getAccessToken } from '@/lib/api-client';
 import { createClient } from '@/lib/supabase/client';
+
+const AnalyticsChart = dynamic(() => import('@/components/AnalyticsChart'), {
+  ssr: false,
+  loading: () => <div className="h-64 animate-pulse rounded-xl bg-slate-100" />,
+});
 
 const SYMBOL = { TRY: '₺', GBP: '£', USD: '$', EUR: '€' };
 const money = (p, locale) => `${SYMBOL[p.currency] || ''}${Number(p.amount).toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}`;
@@ -93,7 +98,7 @@ export function DashboardView({ t, locale, config, auth }) {
   const [tab, setTab] = useState('listings');
   const [data, setData] = useState(null);
   const [analytics, setAnalytics] = useState(null);
-  const [inquiries, setInquiries] = useState([]);
+  const [inquiries, setInquiries] = useState(null);
   const [billing, setBilling] = useState(null);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -108,10 +113,14 @@ export function DashboardView({ t, locale, config, auth }) {
   useEffect(() => {
     if (!auth?.signedIn) return;
     load();
-    api('my/analytics').then(setAnalytics);
-    api('my/inquiries').then((d) => setInquiries(d.items || []));
-    api('my/billing').then(setBilling);
   }, [auth?.signedIn]);
+
+  useEffect(() => {
+    if (!auth?.signedIn) return;
+    if (tab === 'analytics' && !analytics) api('my/analytics').then(setAnalytics);
+    if (tab === 'inquiries' && inquiries == null) api('my/inquiries').then((d) => setInquiries(d.items || []));
+    if (tab === 'billing' && !billing) api('my/billing').then(setBilling);
+  }, [auth?.signedIn, tab]);
 
   useEffect(() => {
     const urls = photoFiles.map((f) => URL.createObjectURL(f));
@@ -499,12 +508,16 @@ export function DashboardView({ t, locale, config, auth }) {
             {(data?.items || []).map((l) => (
               <div key={l.id} className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <img src={l.photo || '/logo.svg'} alt="" className="h-16 w-24 rounded-lg object-cover shrink-0 bg-slate-100" />
+                  <img src={l.photo || '/logo-icon.png'} alt="" className="h-16 w-24 rounded-lg object-cover shrink-0 bg-slate-100" />
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-slate-800 truncate">{l.title}</div>
                     <div className="text-xs text-slate-500">{t('dash.ref')}: {l.reference_code} · {l.city} · {money(l.price, locale)}</div>
                     {l.status === 'rejected' && l.rejection_reason && (
-                      <div className="text-xs text-red-600 mt-1">{t('dash.rejection')}: {l.rejection_reason}</div>
+                      <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 whitespace-pre-wrap leading-relaxed">
+                        <div className="font-bold text-amber-800 mb-0.5">{t('dash.admin_message')}</div>
+                        <div className="mb-1.5 text-amber-900/80">{t('dash.admin_message_cta')}</div>
+                        {l.rejection_reason}
+                      </div>
                     )}
                     <div className="flex sm:hidden items-center gap-3 text-xs text-slate-500 mt-1">
                       <span className="flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {l.view_count ?? 0}</span>
@@ -538,23 +551,13 @@ export function DashboardView({ t, locale, config, auth }) {
       {tab === 'analytics' && analytics && (
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <h3 className="font-bold text-[#0a3d54] mb-4">{t('dash.analytics')} · {t('dash.views')} / {t('dash.reveals')}</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={analytics.trend || []}>
-                <XAxis dataKey="week" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
-                <Tooltip />
-                <Bar dataKey="views" fill="#0a4d68" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="reveals" fill="#e0a256" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <AnalyticsChart data={analytics.trend || []} />
         </div>
       )}
 
       {tab === 'inquiries' && (
         <div className="space-y-3">
-          {inquiries.map((i) => (
+          {(inquiries || []).map((i) => (
             <div key={i.id} className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="flex items-center justify-between">
                 <div className="font-semibold text-slate-800">{i.from} <span className="text-xs text-slate-400">· {i.ref}</span></div>
@@ -563,7 +566,7 @@ export function DashboardView({ t, locale, config, auth }) {
               <p className="text-sm text-slate-600 mt-1">{i.message}</p>
             </div>
           ))}
-          {inquiries.length === 0 && <p className="text-slate-400 text-center py-10">{t('dash.empty')}</p>}
+          {inquiries && inquiries.length === 0 && <p className="text-slate-400 text-center py-10">{t('dash.empty')}</p>}
         </div>
       )}
 
@@ -608,10 +611,213 @@ export function DashboardView({ t, locale, config, auth }) {
 }
 
 // ======================= ADMIN =======================
+function AdminReviewDetail({ t, locale, listingId, onClose, onAct }) {
+  const [item, setItem] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setItem(null);
+    setMessage('');
+    setErr('');
+    api(`admin/listings/${listingId}`)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.error || !r.item) setErr(t('admin.no_items'));
+        else setItem(r.item);
+      })
+      .catch(() => { if (!cancelled) setErr(t('admin.no_items')); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [listingId, t]);
+
+  const presets = [
+    ['preset_price', t('admin.preset_price')],
+    ['preset_photos', t('admin.preset_photos')],
+    ['preset_address', t('admin.preset_address')],
+    ['preset_desc', t('admin.preset_desc')],
+    ['preset_contact', t('admin.preset_contact')],
+  ];
+
+  const appendPreset = (text) => {
+    setMessage((m) => (m ? `${m.trim()}\n• ${text}` : `• ${text}`));
+  };
+
+  const run = async (action) => {
+    if (action !== 'approve' && !message.trim()) {
+      setErr(t('admin.reason_required'));
+      return;
+    }
+    if (action === 'approve' && !window.confirm(t('admin.approve_confirm'))) return;
+    setBusy(true);
+    setErr('');
+    try {
+      await onAct(action, message.trim());
+      onClose();
+    } catch {
+      setErr(t('dash.err_generic'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center">
+      <button type="button" className="absolute inset-0 bg-black/45" aria-label={t('admin.close')} onClick={onClose} />
+      <div className="relative w-full sm:max-w-3xl max-h-[92dvh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-[#f6f4f0] shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200/80 bg-[#f6f4f0]/95 backdrop-blur px-4 py-3 sm:px-5">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t('admin.detail_title')}</div>
+            <div className="font-bold text-[#0a3d54] truncate">{item?.title || '…'}</div>
+          </div>
+          <button type="button" onClick={onClose} className="h-10 w-10 rounded-xl border border-slate-200 bg-white flex items-center justify-center text-slate-600 shrink-0">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="p-4 sm:p-5 space-y-4">
+          {loading && <p className="text-sm text-slate-500 py-10 text-center">{t('admin.loading_detail')}</p>}
+          {err && !loading && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{err}</p>}
+
+          {item && (
+            <>
+              <section>
+                <h3 className="text-sm font-bold text-[#0a3d54] mb-2">{t('admin.photos')}</h3>
+                {item.photos?.length ? (
+                  <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 snap-x">
+                    {item.photos.map((src, i) => (
+                      <img key={`${src}-${i}`} src={src} alt="" className="h-36 w-48 sm:h-40 sm:w-56 rounded-xl object-cover shrink-0 snap-start bg-slate-100" />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">{t('admin.no_photos')}</p>
+                )}
+              </section>
+
+              {item.risk_flags?.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {item.risk_flags.map((f) => (
+                    <span key={f} className="rounded-full bg-red-50 text-red-600 px-2.5 py-1 text-xs font-semibold">{f}</span>
+                  ))}
+                </div>
+              )}
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-slate-400 font-semibold uppercase mb-1">{t('admin.basics')}</div>
+                  <dl className="space-y-1.5 text-slate-700">
+                    <div><span className="text-slate-400">Ref:</span> {item.reference_code}</div>
+                    <div><span className="text-slate-400">{t('dash.field_type')}:</span> {item.property_type}</div>
+                    <div><span className="text-slate-400">{t('dash.field_bedrooms')}:</span> {item.bedrooms} · {t('dash.field_bathrooms')}: {item.bathrooms}</div>
+                    <div><span className="text-slate-400">{t('dash.field_size')}:</span> {item.size_sqm || '—'} m²</div>
+                    <div><span className="text-slate-400">{t('dash.field_occupants')}:</span> {item.max_occupants || '—'}</div>
+                    <div><span className="text-slate-400">{t('dash.field_gender')}:</span> {item.gender_preference}</div>
+                    <div><span className="text-slate-400">Furnished:</span> {item.furnished ? '✓' : '—'}</div>
+                    <div><span className="text-slate-400">{t('dash.field_available')}:</span> {item.available_from || '—'}</div>
+                    <div><span className="text-slate-400">{t('dash.field_min_stay')}:</span> {item.minimum_stay_months || '—'}</div>
+                  </dl>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400 font-semibold uppercase mb-1">{t('admin.pricing')}</div>
+                  <dl className="space-y-1.5 text-slate-700">
+                    <div className="text-lg font-bold text-[#0a4d68]">{money(item.price, locale)} / ay</div>
+                    {item.deposit && <div><span className="text-slate-400">{t('dash.field_deposit')}:</span> {money(item.deposit, locale)}</div>}
+                    <div><span className="text-slate-400">Bills:</span> {item.bills_included ? 'Dahil' : 'Hariç'} {item.bills_note ? `· ${item.bills_note}` : ''}</div>
+                    {item.agency_fee_note && <div><span className="text-slate-400">Komisyon:</span> {item.agency_fee_note}</div>}
+                    {item.price_gbp != null && <div className="text-xs text-slate-400">≈ £{item.price_gbp} GBP</div>}
+                  </dl>
+                  <div className="text-xs text-slate-400 font-semibold uppercase mt-4 mb-1">{t('admin.location')}</div>
+                  <dl className="space-y-1.5 text-slate-700">
+                    <div>{item.city}{item.neighbourhood ? ` · ${item.neighbourhood}` : ''}</div>
+                    {item.university && <div><span className="text-slate-400">Üni:</span> {item.university.name}</div>}
+                    <div className="rounded-xl bg-amber-50 text-amber-900 px-3 py-2 text-xs leading-relaxed">
+                      <div className="font-semibold mb-0.5">{t('admin.private_address')}</div>
+                      {item.address_private || '—'}
+                    </div>
+                  </dl>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-bold text-[#0a3d54] mb-2">{t('admin.description')}</h3>
+                <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{item.description || '—'}</p>
+                {item.amenities?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {item.amenities.map((a) => (
+                      <span key={a} className="rounded-full bg-slate-100 text-slate-600 px-2.5 py-1 text-xs font-medium">{t(`amenity.${a}`) || a}</span>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+                <h3 className="text-sm font-bold text-[#0a3d54] mb-2">{t('admin.owner_info')}</h3>
+                <div className="space-y-1 text-slate-700">
+                  <div className="font-semibold">{item.owner?.display_name || item.owner?.full_name || '—'}</div>
+                  {item.owner?.is_agency && <div className="text-xs text-slate-500">{t('admin.agency')}{item.owner.agency_name ? `: ${item.owner.agency_name}` : ''}</div>}
+                  <div className="text-xs">
+                    {item.owner?.verification_status === 'verified'
+                      ? <span className="text-[#15803d] font-semibold">{t('admin.verified')}</span>
+                      : <span className="text-amber-700 font-semibold">{t('admin.pending_owner')}</span>}
+                  </div>
+                  {item.owner?.phone && <div><span className="text-slate-400">{t('admin.phone')}:</span> {item.owner.phone}</div>}
+                  {item.owner?.email && <div><span className="text-slate-400">{t('admin.email')}:</span> {item.owner.email}</div>}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-[#0a4d68]/20 bg-white p-4 space-y-3">
+                <div>
+                  <h3 className="text-sm font-bold text-[#0a3d54]">{t('admin.message_to_owner')}</h3>
+                  <p className="text-xs text-slate-500 mt-1">{t('admin.message_hint')}</p>
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5">{t('admin.presets')}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {presets.map(([k, label]) => (
+                      <button key={k} type="button" onClick={() => appendPreset(label)} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-white">
+                        {label.length > 42 ? `${label.slice(0, 40)}…` : label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <textarea
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  rows={4}
+                  placeholder={t('admin.message_placeholder')}
+                  className="w-full rounded-xl border border-slate-200 bg-[#faf9f7] px-3 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25 resize-y min-h-[96px]"
+                />
+                <p className="text-[11px] text-slate-500">{t('admin.request_changes_hint')}</p>
+              </section>
+
+              <div className="flex flex-col sm:flex-row gap-2 sticky bottom-0 bg-[#f6f4f0] pt-1 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+                <button type="button" disabled={busy} onClick={() => run('approve')} className="h-11 flex-1 rounded-xl bg-[#15803d] text-white text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-60">
+                  <CheckCircle2 className="h-4 w-4" /> {t('admin.approve')}
+                </button>
+                <button type="button" disabled={busy} onClick={() => run('request_changes')} className="h-11 flex-1 rounded-xl bg-[#0a4d68] text-white text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-60">
+                  <Send className="h-4 w-4" /> {t('admin.request_changes')}
+                </button>
+                <button type="button" disabled={busy} onClick={() => run('reject')} className="h-11 flex-1 rounded-xl bg-red-500 text-white text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-60">
+                  <XCircle className="h-4 w-4" /> {t('admin.reject')}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminView({ t, locale, auth }) {
   const [tab, setTab] = useState('queue');
   const [d, setD] = useState({});
   const [toast, setToast] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
   const reload = (k) => {
     const map = { queue: 'admin/queue', reports: 'admin/reports', users: 'admin/users', invoices: 'admin/invoices', coords: 'admin/coords', audit: 'admin/audit', health: 'admin/health' };
     api(map[k]).then(r => setD(s => ({ ...s, [k]: r.items || [] })));
@@ -621,11 +827,13 @@ export function AdminView({ t, locale, auth }) {
     reload(tab);
   }, [tab, auth?.signedIn, auth?.role]);
   const act = async (p, body, k) => {
-    await api(p, { method: 'POST', body: JSON.stringify(body) });
+    const res = await api(p, { method: 'POST', body: JSON.stringify(body) });
+    if (res?.error) throw new Error(res.error);
     setToast('İşlem kaydedildi (audit_log).');
     reload(k);
     if (k !== 'audit') reload('audit');
     setTimeout(() => setToast(''), 3000);
+    return res;
   };
 
   if (!auth?.signedIn || auth?.role !== 'admin') {
@@ -650,32 +858,48 @@ export function AdminView({ t, locale, auth }) {
         <div className="space-y-3">
           {(d.queue || []).map(l => (
             <div key={l.id} className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="flex items-start gap-4">
-                <img src={l.photo} alt="" className="h-20 w-28 rounded-lg object-cover shrink-0" />
-                <div className="flex-1">
+              <button
+                type="button"
+                onClick={() => setSelectedId(l.id)}
+                className="w-full flex items-start gap-3 sm:gap-4 text-start group cursor-pointer"
+              >
+                <img src={l.photo} alt="" className="h-20 w-28 rounded-lg object-cover shrink-0 bg-slate-100" />
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-slate-800">{l.title}</span>
+                    <span className="font-semibold text-slate-800 group-hover:text-[#0a4d68] transition-colors">{l.title}</span>
                     {l.priority && <span className="rounded-full bg-red-50 text-red-600 px-2 py-0.5 text-xs font-semibold flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {t('admin.priority')}</span>}
                   </div>
-                  <div className="text-xs text-slate-500 mt-0.5">{l.owner} · {l.reference_code}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{l.owner} · {l.reference_code}{l.city ? ` · ${l.city}` : ''}{l.price ? ` · ${money(l.price, locale)}` : ''}</div>
                   {l.risk_flags?.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {l.risk_flags.map(f => <span key={f} className="rounded-full bg-red-50 text-red-600 px-2 py-0.5 text-[11px] font-medium">{f}</span>)}
                     </div>
                   )}
+                  <div className="mt-2 text-xs font-semibold text-[#0a4d68]">{t('admin.open_detail')} →</div>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2 shrink-0">
-                  <button onClick={() => act('admin/review', { id: l.id, action: 'approve' }, 'queue')} className="inline-flex items-center justify-center gap-1 h-9 rounded-lg bg-[#15803d] px-3 text-white text-sm font-semibold"><CheckCircle2 className="h-4 w-4" /> {t('admin.approve')}</button>
-                  <button onClick={() => {
-                    const reason = window.prompt(t('admin.reason'), t('admin.reject_default')) || t('admin.reject_default');
-                    act('admin/review', { id: l.id, action: 'reject', reason }, 'queue');
-                  }} className="inline-flex items-center justify-center gap-1 h-9 rounded-lg bg-red-500 px-3 text-white text-sm font-semibold"><XCircle className="h-4 w-4" /> {t('admin.reject')}</button>
-                </div>
+              </button>
+              <div className="flex flex-col sm:flex-row gap-2 mt-3 sm:justify-end">
+                <button type="button" onClick={() => setSelectedId(l.id)} className="inline-flex items-center justify-center gap-1 h-9 rounded-lg border border-slate-200 bg-white px-3 text-slate-700 text-sm font-semibold">
+                  <Eye className="h-4 w-4" /> {t('admin.open_detail')}
+                </button>
+                <button type="button" onClick={() => act('admin/review', { id: l.id, action: 'approve' }, 'queue')} className="inline-flex items-center justify-center gap-1 h-9 rounded-lg bg-[#15803d] px-3 text-white text-sm font-semibold"><CheckCircle2 className="h-4 w-4" /> {t('admin.approve')}</button>
               </div>
             </div>
           ))}
           {(!d.queue || d.queue.length === 0) && <p className="text-slate-400 text-center py-10">{t('admin.no_items')}</p>}
         </div>
+      )}
+
+      {selectedId && (
+        <AdminReviewDetail
+          t={t}
+          locale={locale}
+          listingId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onAct={async (action, reason) => {
+            await act('admin/review', { id: selectedId, action, reason: reason || undefined }, 'queue');
+          }}
+        />
       )}
 
       {tab === 'reports' && (
