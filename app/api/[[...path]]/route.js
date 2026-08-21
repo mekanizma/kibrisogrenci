@@ -6,12 +6,21 @@ import {
 } from '@/lib/seed';
 import { getRequestUser, requireUser, requireAdmin, isMockMode, hashIp } from '@/lib/auth';
 import * as db from '@/lib/db';
-import { KKTC_CITIES } from '@/lib/universities';
+import { KKTC_CITIES, slugifyUniversityName, universityShort } from '@/lib/universities';
 
 const json = (data, status = 200, cache = 'no-store') =>
   NextResponse.json(data, { status, headers: { 'Cache-Control': cache } });
 
 const PUBLIC_CACHE = 'public, max-age=30, s-maxage=60, stale-while-revalidate=300';
+
+const CITY_FALLBACK = {
+  Girne: { lat: 35.341, lng: 33.317 },
+  Lefkoşa: { lat: 35.185, lng: 33.382 },
+  Gazimağusa: { lat: 35.125, lng: 33.94 },
+  Güzelyurt: { lat: 35.199, lng: 32.993 },
+  Lefke: { lat: 35.112, lng: 32.85 },
+  İskele: { lat: 35.287, lng: 33.892 },
+};
 
 // ---- mock stores (dev / MOCK_MODE only) ----
 const revealCounts = new Map();
@@ -248,10 +257,12 @@ function clientIp(request) {
 
 async function handleMock(request, route, path, method, sp) {
   if (route === 'config' && method === 'GET') {
-    const mapped = UNIVERSITIES.map((u) => ({
-      ...u,
-      listings_count: LISTINGS.filter((l) => l.uni === u.id).length,
-    }));
+    const mapped = UNIVERSITIES
+      .filter((u) => u.is_active !== false)
+      .map((u) => ({
+        ...u,
+        listings_count: LISTINGS.filter((l) => l.uni === u.id).length,
+      }));
     return json({
       fx_to_gbp: FX_TO_GBP, currencies: CURRENCIES, hero_image: HERO_IMAGE,
       universities: mapped,
@@ -464,12 +475,112 @@ async function handleMock(request, route, path, method, sp) {
     return json({ ok: true, subscription_activated: true });
   }
   if (route === 'admin/coords' && method === 'GET') {
-    return json({ items: UNIVERSITIES.map((u) => ({ id: u.id, short: u.short, name: u.name_tr, city: u.city, coordinates_verified: u.coordinates_verified, lat: u.lat, lng: u.lng })) });
+    return json({
+      items: UNIVERSITIES.map((u) => ({
+        id: u.id,
+        slug: u.slug,
+        short: u.short || universityShort(u.slug, u.name_en, u.name_tr),
+        name: u.name_tr,
+        name_tr: u.name_tr,
+        name_en: u.name_en,
+        city: u.city,
+        coordinates_verified: u.coordinates_verified,
+        lat: u.lat,
+        lng: u.lng,
+        students: u.students,
+        is_active: u.is_active !== false,
+      })),
+    });
+  }
+  if (route === 'admin/universities' && method === 'GET') {
+    return json({
+      items: UNIVERSITIES.map((u) => ({
+        id: u.id,
+        slug: u.slug,
+        short: u.short || universityShort(u.slug, u.name_en, u.name_tr),
+        name: u.name_tr,
+        name_tr: u.name_tr,
+        name_en: u.name_en,
+        city: u.city,
+        coordinates_verified: u.coordinates_verified,
+        lat: u.lat,
+        lng: u.lng,
+        students: u.students,
+        is_active: u.is_active !== false,
+      })),
+    });
+  }
+  if (route === 'admin/universities' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const nameTr = String(b.name_tr || b.name || '').trim();
+    const nameEn = String(b.name_en || nameTr).trim();
+    if (nameTr.length < 2) return json({ error: 'name_required' }, 400);
+    const city = String(b.city || '').trim();
+    if (!city) return json({ error: 'city_required' }, 400);
+    let slug = String(b.slug || '').trim() || slugifyUniversityName(nameTr);
+    const lat = b.lat != null && b.lat !== '' ? Number(b.lat) : null;
+    const lng = b.lng != null && b.lng !== '' ? Number(b.lng) : null;
+    const students = b.students != null && b.students !== '' ? Number(b.students) : null;
+    const verify = b.coordinates_verified === true || b.coordinates_verified === 'true';
+    const isActive = !(b.is_active === false || b.is_active === 'false');
+
+    if (b.id) {
+      const u = UNIVERSITIES.find((x) => x.id === b.id);
+      if (!u) return json({ error: 'not_found' }, 404);
+      Object.assign(u, {
+        name_tr: nameTr,
+        name_en: nameEn,
+        slug,
+        short: universityShort(slug, nameEn, nameTr),
+        city,
+        lat: Number.isFinite(lat) ? lat : u.lat,
+        lng: Number.isFinite(lng) ? lng : u.lng,
+        students: Number.isFinite(students) ? students : u.students,
+        coordinates_verified: verify,
+        is_active: isActive,
+      });
+      audit('Admin', 'university.update', 'university', u.id, null, { slug, city, lat: u.lat, lng: u.lng });
+      return json({ ok: true, id: u.id });
+    }
+
+    const id = `u-${slug.slice(0, 12)}-${Date.now().toString(36).slice(-4)}`;
+    UNIVERSITIES.push({
+      id,
+      slug,
+      short: universityShort(slug, nameEn, nameTr),
+      name_tr: nameTr,
+      name_en: nameEn,
+      city,
+      lat: Number.isFinite(lat) ? lat : (CITY_FALLBACK[city]?.lat ?? 35.18),
+      lng: Number.isFinite(lng) ? lng : (CITY_FALLBACK[city]?.lng ?? 33.38),
+      students: Number.isFinite(students) ? students : 0,
+      coordinates_verified: verify && Number.isFinite(lat) && Number.isFinite(lng),
+      is_active: isActive,
+    });
+    audit('Admin', 'university.create', 'university', id, null, { slug, city });
+    return json({ ok: true, id });
+  }
+  if (route === 'admin/universities/delete' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const idx = UNIVERSITIES.findIndex((x) => x.id === b.id);
+    if (idx < 0) return json({ error: 'not_found' }, 404);
+    if (b.hard === true || b.hard === 'true') {
+      const removed = UNIVERSITIES.splice(idx, 1)[0];
+      audit('Admin', 'university.delete', 'university', b.id, { slug: removed.slug }, null);
+      return json({ ok: true, deleted: true });
+    }
+    UNIVERSITIES[idx].is_active = false;
+    audit('Admin', 'university.deactivate', 'university', b.id, null, { is_active: false });
+    return json({ ok: true, deactivated: true });
   }
   if (route === 'admin/coords/verify' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const u = UNIVERSITIES.find((x) => x.id === b.id);
-    if (u) u.coordinates_verified = true;
+    if (u) {
+      if (b.lat != null) u.lat = Number(b.lat);
+      if (b.lng != null) u.lng = Number(b.lng);
+      u.coordinates_verified = true;
+    }
     audit('Admin', 'university.verify_coords', 'university', b.id, { coordinates_verified: false }, { coordinates_verified: true });
     return json({ ok: true });
   }
@@ -686,6 +797,14 @@ async function handleLive(request, route, path, method, sp, user) {
     if (result.error) return json({ error: result.error }, result.status);
     return json(result);
   }
+  if (path[0] === 'my' && path[1] === 'listings' && path[2] && path[3] === 'action' && method === 'POST') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const body = await request.json().catch(() => ({}));
+    const result = await db.dbOwnerListingAction(user, path[2], body.action);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
   if (route === 'my/become-landlord' && method === 'POST') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);
@@ -869,11 +988,24 @@ async function handleLive(request, route, path, method, sp, user) {
     return json({ ok: true, subscription_activated: true });
   }
   if (route === 'admin/coords' && method === 'GET') return json(await db.dbAdminCoords());
+  if (route === 'admin/universities' && method === 'GET') return json(await db.dbAdminUniversities());
+  if (route === 'admin/universities' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const out = await db.dbAdminUniversitySave(user, body);
+    if (out?.error) return json(out, out.status || 400);
+    return json(out);
+  }
+  if (route === 'admin/universities/delete' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const out = await db.dbAdminUniversityDelete(user, body);
+    if (out?.error) return json(out, out.status || 400);
+    return json(out);
+  }
   if (route === 'admin/coords/verify' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    const { supabaseAdmin } = await import('@/lib/supabase/admin');
-    await supabaseAdmin().from('universities').update({ coordinates_verified: true }).eq('id', body.id);
-    return json({ ok: true });
+    const out = await db.dbAdminUniversityVerify(user, body);
+    if (out?.error) return json(out, out.status || 400);
+    return json(out);
   }
   if (route === 'admin/audit' && method === 'GET') return json(await db.dbAdminAudit());
   if (route === 'admin/health' && method === 'GET') return json(await db.dbAdminHealth());

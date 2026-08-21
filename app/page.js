@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { tFor, LOCALES, LOCALE_LABEL, isRTL, listingLang, isMachineTranslated } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase/client';
-import { api, refreshSessionIntoAuth, signOutEverywhere, setAccessToken } from '@/lib/api-client';
+import { api, getAccessToken, refreshSessionIntoAuth, signOutEverywhere, setAccessToken } from '@/lib/api-client';
 import { MOCK_PHOTOS } from '@/lib/mock-featured';
 import {
   distanceToListing,
@@ -347,6 +347,7 @@ export default function App() {
   const [userLoc, setUserLoc] = useState(null);
   const [geoBanner, setGeoBanner] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState(0);
 
   const t = useMemo(() => tFor(locale), [locale]);
   const fx = config?.fx_to_gbp || { TRY: 0.0234, USD: 0.79, EUR: 0.855, GBP: 1 };
@@ -420,6 +421,32 @@ export default function App() {
     window.scrollTo(0, 0);
   }, [view, locale]);
 
+  const refreshUnread = useCallback(async () => {
+    if (!auth?.signedIn) {
+      setUnreadMessages(0);
+      return;
+    }
+    try {
+      const token = getAccessToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await api('messages/unread', { headers });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setUnreadMessages(Number(data.count) || 0);
+    } catch {
+      /* ignore */
+    }
+  }, [auth?.signedIn]);
+
+  useEffect(() => {
+    if (!auth?.signedIn) {
+      setUnreadMessages(0);
+      return undefined;
+    }
+    refreshUnread();
+    const id = setInterval(refreshUnread, 12000);
+    return () => clearInterval(id);
+  }, [auth?.signedIn, refreshUnread, view.name]);
+
   const goSearch = useCallback((filters = {}) => setView({ name: 'search', filters }), []);
   const goListing = useCallback((ref) => setView({ name: 'listing', ref }), []);
   const goUniversity = useCallback((slug) => setView({ name: 'university', slug }), []);
@@ -430,7 +457,7 @@ export default function App() {
   return (
     <div className="min-h-screen text-slate-800">
       <Header {...shared} locale={locale} setLocale={setLocale} currency={currency} setCurrency={setCurrency}
-        setView={setView} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
+        setView={setView} menuOpen={menuOpen} setMenuOpen={setMenuOpen} unreadMessages={unreadMessages} />
 
       {config?.mock && (
         <div className="bg-[#08304a] text-white/90 text-center text-xs py-1.5 px-4 tracking-wide">
@@ -467,6 +494,7 @@ export default function App() {
             setAuthModal={setAuthModal}
             setView={setView}
             initialId={view.id || null}
+            onUnreadChange={refreshUnread}
           />
         )}
         {view.name === 'profile' && (
@@ -521,10 +549,15 @@ function BrandMark({ className = 'h-10 w-auto', title = 'Kıbrıs Öğrenci', va
 // ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
-function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, setAuth, setAuthModal, config, menuOpen, setMenuOpen }) {
+function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, setAuth, setAuthModal, config, menuOpen, setMenuOpen, unreadMessages = 0 }) {
   const [guideOpen, setGuideOpen] = useState(false);
   const guideRef = useRef(null);
   const go = (v) => { setView(v); setMenuOpen(false); setGuideOpen(false); };
+  const unreadBadge = unreadMessages > 0 ? (
+    <span className="ms-1.5 inline-flex min-w-[1.125rem] h-[1.125rem] items-center justify-center rounded-full bg-[#c45c26] px-1 text-[10px] font-bold leading-none text-white tabular-nums">
+      {unreadMessages > 9 ? '9+' : unreadMessages}
+    </span>
+  ) : null;
   const navItems = [
     ['search', () => go({ name: 'search', filters: {} })],
     ['dashboard', () => go({ name: 'dashboard' })],
@@ -576,7 +609,10 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
 
         <nav className="hidden lg:flex items-center gap-1 text-sm font-medium text-slate-600">
           {navItems.map(([k, fn]) => (
-            <button type="button" key={k} onClick={fn} className="px-3 py-2 rounded-lg hover:bg-[var(--ko-mist)] hover:text-[#0a4d68] whitespace-nowrap transition-colors cursor-pointer">{t(`nav.${k}`)}</button>
+            <button type="button" key={k} onClick={fn} className="inline-flex items-center px-3 py-2 rounded-lg hover:bg-[var(--ko-mist)] hover:text-[#0a4d68] whitespace-nowrap transition-colors cursor-pointer">
+              {t(`nav.${k}`)}
+              {k === 'messages' ? unreadBadge : null}
+            </button>
           ))}
           <div className="relative" ref={guideRef}>
             <button
@@ -644,8 +680,11 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
               {t('nav.signin')}
             </button>
           )}
-          <button type="button" onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden h-11 w-11 flex items-center justify-center rounded-2xl border border-slate-200/80 text-slate-600 bg-white/90 cursor-pointer" aria-label="Menu">
+          <button type="button" onClick={() => setMenuOpen(!menuOpen)} className="relative lg:hidden h-11 w-11 flex items-center justify-center rounded-2xl border border-slate-200/80 text-slate-600 bg-white/90 cursor-pointer" aria-label="Menu">
             {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            {!menuOpen && unreadMessages > 0 && (
+              <span className="absolute top-1.5 end-1.5 h-2.5 w-2.5 rounded-full bg-[#c45c26] ring-2 ring-[#f6f4f0]" aria-hidden />
+            )}
           </button>
         </div>
       </div>
@@ -654,7 +693,10 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
         <div className="lg:hidden border-t border-slate-200/70 bg-[#f6f4f0]/98 backdrop-blur-xl max-h-[calc(100dvh-4rem)] overflow-y-auto">
           <nav className="container py-3 pb-6 flex flex-col gap-1">
             {mobileNavItems.map(([k, fn]) => (
-              <button type="button" key={k} onClick={fn} className="text-start min-h-12 py-3 px-3 rounded-2xl text-sm font-medium text-slate-700 hover:bg-white">{t(`nav.${k}`)}</button>
+              <button type="button" key={k} onClick={fn} className="inline-flex items-center text-start min-h-12 py-3 px-3 rounded-2xl text-sm font-medium text-slate-700 hover:bg-white">
+                {t(`nav.${k}`)}
+                {k === 'messages' ? unreadBadge : null}
+              </button>
             ))}
             {auth.signedIn ? (
               <button type="button" onClick={() => { signOutEverywhere(setAuth); setMenuOpen(false); }} className="text-start min-h-12 py-3 px-3 rounded-2xl text-sm font-medium text-slate-600 hover:bg-white">{t('nav.signout')}</button>

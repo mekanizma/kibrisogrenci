@@ -5,7 +5,7 @@ import {
   Plus, Eye, Phone, CreditCard, CheckCircle2, XCircle,
   ShieldAlert, Activity, Building2, Send, Bot,
   BadgeCheck, AlertTriangle, Banknote, X, ImagePlus,
-  Pencil, Trash2, MapPin, Flag,
+  Pencil, Trash2, MapPin, Flag, Pause, Play, CircleSlash,
 } from 'lucide-react';
 import { api as apiFetch, getAccessToken } from '@/lib/api-client';
 import { createClient } from '@/lib/supabase/client';
@@ -62,11 +62,24 @@ const EMPTY_FORM = {
 };
 
 const STATUS_STYLE = {
-  published: 'bg-[#dcfce7] text-[#15803d]', pending_review: 'bg-amber-50 text-amber-700',
-  draft: 'bg-slate-100 text-slate-500', rejected: 'bg-red-50 text-red-600',
+  published: 'bg-[#dcfce7] text-[#15803d]',
+  pending_review: 'bg-amber-50 text-amber-700',
+  draft: 'bg-slate-100 text-slate-500',
+  rejected: 'bg-red-50 text-red-600',
+  paused: 'bg-sky-50 text-sky-800',
+  rented: 'bg-violet-50 text-violet-800',
+  expired: 'bg-slate-100 text-slate-500',
 };
 function StatusPill({ s, t }) {
-  const label = { published: t('dash.published'), pending_review: t('dash.pending'), draft: t('dash.draft'), rejected: t('dash.rejected') }[s] || s;
+  const label = {
+    published: t('dash.published'),
+    pending_review: t('dash.pending'),
+    draft: t('dash.draft'),
+    rejected: t('dash.rejected'),
+    paused: t('dash.paused'),
+    rented: t('dash.closed'),
+    expired: t('dash.expired'),
+  }[s] || s;
   return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_STYLE[s] || 'bg-slate-100 text-slate-600'}`}>{label}</span>;
 }
 
@@ -256,6 +269,37 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
     const res = await api(`my/listings/${id}`, { method: 'DELETE' });
     if (res.error) { setToast(t('dash.err_generic')); return; }
     setToast(t('dash.deleted'));
+    load();
+    setTimeout(() => setToast(''), 3000);
+  };
+
+  const ownerAction = async (id, action) => {
+    const confirms = {
+      pause: t('dash.confirm_pause'),
+      close: t('dash.confirm_close'),
+      resume: null,
+      reopen: t('dash.confirm_reopen'),
+    };
+    const conf = confirms[action];
+    if (conf && !confirm(conf)) return;
+    setBusy(true);
+    const res = await api(`my/listings/${id}/action`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    });
+    setBusy(false);
+    if (res.error) {
+      setToast(t('dash.err_generic'));
+      setTimeout(() => setToast(''), 3000);
+      return;
+    }
+    const okMsg = {
+      pause: t('dash.paused_ok'),
+      resume: t('dash.resumed_ok'),
+      close: t('dash.closed_ok'),
+      reopen: t('dash.reopened_ok'),
+    }[action] || t('dash.saved_ok');
+    setToast(okMsg);
     load();
     setTimeout(() => setToast(''), 3000);
   };
@@ -645,15 +689,40 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
                   )}
                 </div>
                 <div className="hidden sm:block"><StatusPill s={l.status} t={t} /></div>
-                <div className="flex gap-2 shrink-0">
-                  <button type="button" onClick={() => startEdit(l.id)} className="h-9 px-3 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700 inline-flex items-center gap-1">
-                    <Pencil className="h-3.5 w-3.5" /> {t('dash.edit')}
-                  </button>
-                  {['draft', 'rejected', 'pending_review'].includes(l.status) && (
-                    <button type="button" onClick={() => removeListing(l.id)} className="h-9 px-3 rounded-lg border border-red-100 text-sm font-semibold text-red-600 inline-flex items-center gap-1">
-                      <Trash2 className="h-3.5 w-3.5" /> {t('dash.delete')}
+                <div className="flex flex-wrap gap-2 shrink-0 w-full sm:w-auto justify-stretch sm:justify-end">
+                  {l.status === 'published' && (
+                    <button type="button" disabled={busy} onClick={() => ownerAction(l.id, 'pause')}
+                      className="h-9 flex-1 sm:flex-none px-3 rounded-lg border border-sky-200 bg-sky-50 text-sm font-semibold text-sky-800 inline-flex items-center justify-center gap-1 disabled:opacity-50">
+                      <Pause className="h-3.5 w-3.5" /> {t('dash.pause')}
                     </button>
                   )}
+                  {l.status === 'paused' && (
+                    <button type="button" disabled={busy} onClick={() => ownerAction(l.id, 'resume')}
+                      className="h-9 flex-1 sm:flex-none px-3 rounded-lg border border-emerald-200 bg-emerald-50 text-sm font-semibold text-emerald-800 inline-flex items-center justify-center gap-1 disabled:opacity-50">
+                      <Play className="h-3.5 w-3.5" /> {t('dash.resume')}
+                    </button>
+                  )}
+                  {['published', 'paused'].includes(l.status) && (
+                    <button type="button" disabled={busy} onClick={() => ownerAction(l.id, 'close')}
+                      className="h-9 flex-1 sm:flex-none px-3 rounded-lg border border-violet-200 bg-violet-50 text-sm font-semibold text-violet-800 inline-flex items-center justify-center gap-1 disabled:opacity-50">
+                      <CircleSlash className="h-3.5 w-3.5" /> {t('dash.close_listing')}
+                    </button>
+                  )}
+                  {['rented', 'expired'].includes(l.status) && (
+                    <button type="button" disabled={busy} onClick={() => ownerAction(l.id, 'reopen')}
+                      className="h-9 flex-1 sm:flex-none px-3 rounded-lg border border-amber-200 bg-amber-50 text-sm font-semibold text-amber-900 inline-flex items-center justify-center gap-1 disabled:opacity-50">
+                      <Play className="h-3.5 w-3.5" /> {t('dash.reopen')}
+                    </button>
+                  )}
+                  {['draft', 'rejected', 'paused', 'rented', 'expired', 'published', 'pending_review'].includes(l.status) && (
+                    <button type="button" onClick={() => startEdit(l.id)} className="h-9 flex-1 sm:flex-none px-3 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700 inline-flex items-center justify-center gap-1">
+                      <Pencil className="h-3.5 w-3.5" /> {t('dash.edit')}
+                    </button>
+                  )}
+                  <button type="button" disabled={busy} onClick={() => removeListing(l.id)}
+                    className="h-9 flex-1 sm:flex-none px-3 rounded-lg border border-red-100 text-sm font-semibold text-red-600 inline-flex items-center justify-center gap-1 disabled:opacity-50">
+                    <Trash2 className="h-3.5 w-3.5" /> {t('dash.delete')}
+                  </button>
                 </div>
               </div>
             ))}
@@ -1005,9 +1074,20 @@ export function AdminView({ t, locale, auth }) {
   const [d, setD] = useState({});
   const [toast, setToast] = useState('');
   const [selectedId, setSelectedId] = useState(null);
+  const [uniForm, setUniForm] = useState(null); // null | {} editing
+  const [uniSaving, setUniSaving] = useState(false);
   const reload = (k) => {
-    const map = { queue: 'admin/queue', reports: 'admin/reports', users: 'admin/users', invoices: 'admin/invoices', coords: 'admin/coords', audit: 'admin/audit', health: 'admin/health' };
-    api(map[k]).then(r => setD(s => ({ ...s, [k]: r.items || [] })));
+    const map = {
+      queue: 'admin/queue',
+      reports: 'admin/reports',
+      users: 'admin/users',
+      invoices: 'admin/invoices',
+      universities: 'admin/universities',
+      coords: 'admin/universities',
+      audit: 'admin/audit',
+      health: 'admin/health',
+    };
+    api(map[k]).then((r) => setD((s) => ({ ...s, [k]: r.items || [] })));
   };
   useEffect(() => {
     if (!auth?.signedIn || auth?.role !== 'admin') return;
@@ -1031,7 +1111,15 @@ export function AdminView({ t, locale, auth }) {
     );
   }
 
-  const tabs = [['queue', t('admin.queue')], ['reports', t('admin.reports')], ['users', t('admin.users')], ['invoices', t('admin.invoices')], ['coords', t('admin.coords')], ['health', t('admin.health')], ['audit', t('admin.audit')]];
+  const tabs = [
+    ['queue', t('admin.queue')],
+    ['reports', t('admin.reports')],
+    ['users', t('admin.users')],
+    ['invoices', t('admin.invoices')],
+    ['universities', t('admin.universities')],
+    ['health', t('admin.health')],
+    ['audit', t('admin.audit')],
+  ];
 
   return (
     <div className="container py-8">
@@ -1238,18 +1326,263 @@ export function AdminView({ t, locale, auth }) {
         </div>
       )}
 
-      {tab === 'coords' && (
-        <div>
-          <p className="text-sm text-amber-700 bg-amber-50 rounded-xl px-4 py-3 mb-4 flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> {t('admin.coord_warning')}</p>
+      {tab === 'universities' && (
+        <div className="space-y-4">
+          <p className="text-sm text-amber-800 bg-amber-50 rounded-xl px-4 py-3 flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>{t('admin.uni_hint')}</span>
+          </p>
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-slate-500">
+              {(d.universities || []).length} {t('admin.uni_count')}
+            </p>
+            <button
+              type="button"
+              onClick={() => setUniForm({
+                id: null,
+                name_tr: '',
+                name_en: '',
+                slug: '',
+                city: KKTC_CITIES[0] || 'Lefkoşa',
+                lat: '',
+                lng: '',
+                students: '',
+                coordinates_verified: false,
+                is_active: true,
+              })}
+              className="inline-flex items-center justify-center gap-1.5 h-11 rounded-xl bg-[#0a4d68] px-4 text-white text-sm font-semibold"
+            >
+              <Plus className="h-4 w-4" /> {t('admin.uni_add')}
+            </button>
+          </div>
+
+          {uniForm && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-bold text-[#0a3d54]">
+                  {uniForm.id ? t('admin.uni_edit') : t('admin.uni_add')}
+                </h3>
+                <button type="button" onClick={() => setUniForm(null)} className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-50" aria-label={t('admin.close')}>
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block text-xs font-semibold text-slate-500">
+                  {t('admin.uni_name_tr')}
+                  <input
+                    value={uniForm.name_tr}
+                    onChange={(e) => setUniForm((s) => ({ ...s, name_tr: e.target.value }))}
+                    className="mt-1 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  {t('admin.uni_name_en')}
+                  <input
+                    value={uniForm.name_en}
+                    onChange={(e) => setUniForm((s) => ({ ...s, name_en: e.target.value }))}
+                    className="mt-1 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  {t('admin.uni_slug')}
+                  <input
+                    value={uniForm.slug}
+                    onChange={(e) => setUniForm((s) => ({ ...s, slug: e.target.value }))}
+                    placeholder="otomatik"
+                    className="mt-1 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  {t('admin.uni_city')}
+                  <select
+                    value={uniForm.city}
+                    onChange={(e) => setUniForm((s) => ({ ...s, city: e.target.value }))}
+                    className="mt-1 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25 bg-white"
+                  >
+                    {KKTC_CITIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  {t('admin.uni_lat')}
+                  <input
+                    type="number"
+                    step="any"
+                    inputMode="decimal"
+                    value={uniForm.lat}
+                    onChange={(e) => setUniForm((s) => ({ ...s, lat: e.target.value }))}
+                    placeholder="35.14"
+                    className="mt-1 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  {t('admin.uni_lng')}
+                  <input
+                    type="number"
+                    step="any"
+                    inputMode="decimal"
+                    value={uniForm.lng}
+                    onChange={(e) => setUniForm((s) => ({ ...s, lng: e.target.value }))}
+                    placeholder="33.91"
+                    className="mt-1 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25"
+                  />
+                </label>
+                <label className="block text-xs font-semibold text-slate-500">
+                  {t('admin.uni_students')}
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    value={uniForm.students}
+                    onChange={(e) => setUniForm((s) => ({ ...s, students: e.target.value }))}
+                    className="mt-1 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-[#0a4d68]/25"
+                  />
+                </label>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700 min-h-11">
+                  <input
+                    type="checkbox"
+                    checked={!!uniForm.coordinates_verified}
+                    onChange={(e) => setUniForm((s) => ({ ...s, coordinates_verified: e.target.checked }))}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  {t('admin.uni_verified')}
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700 min-h-11">
+                  <input
+                    type="checkbox"
+                    checked={uniForm.is_active !== false}
+                    onChange={(e) => setUniForm((s) => ({ ...s, is_active: e.target.checked }))}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  {t('admin.uni_active')}
+                </label>
+              </div>
+              <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-1">
+                <button type="button" onClick={() => setUniForm(null)} className="h-11 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-600">
+                  {t('admin.close')}
+                </button>
+                <button
+                  type="button"
+                  disabled={uniSaving}
+                  onClick={async () => {
+                    setUniSaving(true);
+                    try {
+                      await act('admin/universities', {
+                        id: uniForm.id || undefined,
+                        name_tr: uniForm.name_tr,
+                        name_en: uniForm.name_en,
+                        slug: uniForm.slug || undefined,
+                        city: uniForm.city,
+                        lat: uniForm.lat === '' ? undefined : uniForm.lat,
+                        lng: uniForm.lng === '' ? undefined : uniForm.lng,
+                        students: uniForm.students === '' ? undefined : uniForm.students,
+                        coordinates_verified: !!uniForm.coordinates_verified,
+                        is_active: uniForm.is_active !== false,
+                      }, 'universities');
+                      setUniForm(null);
+                    } catch (e) {
+                      setToast(e?.message || t('admin.uni_error'));
+                      setTimeout(() => setToast(''), 3500);
+                    } finally {
+                      setUniSaving(false);
+                    }
+                  }}
+                  className="h-11 rounded-xl bg-[#0a4d68] px-5 text-white text-sm font-semibold disabled:opacity-60"
+                >
+                  {uniSaving ? t('common.loading') : t('admin.uni_save')}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
-            {(d.coords || []).map(u => (
-              <div key={u.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3">
-                <div><span className="font-semibold text-slate-800">{u.short}</span> <span className="text-xs text-slate-400">· {u.name} · {u.city} · {u.lat.toFixed(3)}, {u.lng.toFixed(3)}</span></div>
-                {u.coordinates_verified
-                  ? <span className="text-xs rounded-full px-2 py-0.5 font-semibold bg-[#dcfce7] text-[#15803d] flex items-center gap-1"><BadgeCheck className="h-3.5 w-3.5" /> verified</span>
-                  : <button onClick={() => act('admin/coords/verify', { id: u.id }, 'coords')} className="h-9 rounded-lg bg-[#0a4d68] px-3 text-white text-sm font-semibold">{t('admin.verify')}</button>}
+            {(d.universities || []).map((u) => (
+              <div key={u.id} className={`rounded-xl border bg-white p-3 sm:p-4 ${u.is_active === false ? 'border-slate-100 opacity-70' : 'border-slate-200'}`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-slate-800">{u.short || u.name}</span>
+                      {u.coordinates_verified
+                        ? <span className="text-[11px] rounded-full px-2 py-0.5 font-semibold bg-[#dcfce7] text-[#15803d] inline-flex items-center gap-1"><BadgeCheck className="h-3 w-3" /> {t('admin.verified')}</span>
+                        : <span className="text-[11px] rounded-full px-2 py-0.5 font-semibold bg-amber-50 text-amber-800">{t('admin.uni_unverified')}</span>}
+                      {u.is_active === false && (
+                        <span className="text-[11px] rounded-full px-2 py-0.5 font-semibold bg-slate-100 text-slate-500">{t('admin.uni_inactive')}</span>
+                      )}
+                    </div>
+                    <div className="text-sm text-slate-700 mt-0.5 truncate">{u.name_tr || u.name}</div>
+                    <div className="text-xs text-slate-400 mt-1 flex flex-wrap gap-x-2">
+                      <span>{u.city}</span>
+                      {u.lat != null && u.lng != null && (
+                        <span>· {Number(u.lat).toFixed(4)}, {Number(u.lng).toFixed(4)}</span>
+                      )}
+                      {u.slug && <span className="font-mono">· {u.slug}</span>}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setUniForm({
+                        id: u.id,
+                        name_tr: u.name_tr || u.name || '',
+                        name_en: u.name_en || '',
+                        slug: u.slug || '',
+                        city: u.city || KKTC_CITIES[0],
+                        lat: u.lat ?? '',
+                        lng: u.lng ?? '',
+                        students: u.students ?? '',
+                        coordinates_verified: !!u.coordinates_verified,
+                        is_active: u.is_active !== false,
+                      })}
+                      className="h-10 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 inline-flex items-center gap-1"
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> {t('admin.uni_edit')}
+                    </button>
+                    {!u.coordinates_verified && (
+                      <button
+                        type="button"
+                        onClick={() => act('admin/coords/verify', { id: u.id, lat: u.lat, lng: u.lng }, 'universities')}
+                        className="h-10 rounded-lg bg-[#0a4d68] px-3 text-white text-sm font-semibold"
+                      >
+                        {t('admin.verify')}
+                      </button>
+                    )}
+                    {u.is_active !== false ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!window.confirm(t('admin.uni_confirm_remove'))) return;
+                          act('admin/universities/delete', { id: u.id }, 'universities');
+                        }}
+                        className="h-10 rounded-lg border border-red-200 text-red-700 px-3 text-sm font-semibold inline-flex items-center gap-1"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> {t('admin.uni_remove')}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => act('admin/universities', {
+                          id: u.id,
+                          name_tr: u.name_tr || u.name,
+                          name_en: u.name_en || u.name_tr || u.name,
+                          slug: u.slug,
+                          city: u.city,
+                          lat: u.lat,
+                          lng: u.lng,
+                          students: u.students,
+                          coordinates_verified: !!u.coordinates_verified,
+                          is_active: true,
+                        }, 'universities')}
+                        className="h-10 rounded-lg border border-slate-200 px-3 text-sm font-semibold"
+                      >
+                        {t('admin.uni_restore')}
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             ))}
+            {!(d.universities || []).length && <p className="text-slate-400 text-center py-10">{t('admin.no_items')}</p>}
           </div>
         </div>
       )}

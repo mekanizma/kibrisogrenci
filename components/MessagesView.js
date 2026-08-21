@@ -28,7 +28,7 @@ function fmtTime(iso, locale) {
   }
 }
 
-export default function MessagesView({ t, locale, auth, setAuthModal, initialId, setView }) {
+export default function MessagesView({ t, locale, auth, setAuthModal, initialId, setView, onUnreadChange }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState(initialId || null);
@@ -37,7 +37,7 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
-  const bottomRef = useRef(null);
+  const threadScrollRef = useRef(null);
   const pollRef = useRef(null);
 
   const loadInbox = useCallback(async () => {
@@ -47,9 +47,12 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
       return;
     }
     const { ok, data } = await msgApi('messages');
-    if (ok) setItems(data.items || []);
+    if (ok) {
+      setItems(data.items || []);
+      onUnreadChange?.();
+    }
     setLoading(false);
-  }, [auth?.signedIn]);
+  }, [auth?.signedIn, onUnreadChange]);
 
   const loadThread = useCallback(async (id, soft) => {
     if (!id || !auth?.signedIn) return;
@@ -66,7 +69,8 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
     setThread(data);
     setThreadLoading(false);
     setItems((prev) => prev.map((c) => (c.id === id ? { ...c, unread: false } : c)));
-  }, [auth?.signedIn, t]);
+    if (!soft) onUnreadChange?.();
+  }, [auth?.signedIn, t, onUnreadChange]);
 
   useEffect(() => {
     loadInbox();
@@ -87,8 +91,22 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
   }, [activeId, loadThread]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Scroll only inside the thread panel — never the whole page
+    const box = threadScrollRef.current;
+    if (!box) return;
+    requestAnimationFrame(() => {
+      box.scrollTop = box.scrollHeight;
+    });
   }, [thread?.messages?.length, activeId]);
+
+  const openConversation = (id) => {
+    // Keep window scroll position when opening a chat (esp. mobile)
+    const y = typeof window !== 'undefined' ? window.scrollY : 0;
+    setActiveId(id);
+    requestAnimationFrame(() => {
+      if (typeof window !== 'undefined') window.scrollTo(0, y);
+    });
+  };
 
   const send = async () => {
     const text = draft.trim();
@@ -150,10 +168,10 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
         </h1>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,320px)_1fr] gap-0 md:gap-4 rounded-2xl border border-slate-200 bg-white overflow-hidden min-h-[min(70vh,640px)]">
+      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,320px)_1fr] gap-0 md:gap-4 rounded-2xl border border-slate-200 bg-white overflow-hidden h-[min(72dvh,640px)]">
         {/* Inbox */}
-        <aside className={`${showThread ? 'hidden md:flex' : 'flex'} flex-col border-b md:border-b-0 md:border-e border-slate-100 min-h-[50vh] md:min-h-0`}>
-          <div className="px-4 py-3 border-b border-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        <aside className={`${showThread ? 'hidden md:flex' : 'flex'} flex-col border-b md:border-b-0 md:border-e border-slate-100 min-h-0 h-full`}>
+          <div className="px-4 py-3 border-b border-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-400 shrink-0">
             {t('messages.inbox')}
           </div>
           {loading ? (
@@ -161,12 +179,12 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
           ) : items.length === 0 ? (
             <div className="p-6 text-sm text-slate-500 leading-relaxed">{t('messages.empty')}</div>
           ) : (
-            <ul className="flex-1 overflow-y-auto">
+            <ul className="flex-1 overflow-y-auto overscroll-contain min-h-0">
               {items.map((c) => (
                 <li key={c.id}>
                   <button
                     type="button"
-                    onClick={() => setActiveId(c.id)}
+                    onClick={() => openConversation(c.id)}
                     className={`w-full text-start px-4 py-3.5 border-b border-slate-50 transition-colors ${
                       activeId === c.id ? 'bg-[#e8f4f7]' : 'hover:bg-slate-50'
                     }`}
@@ -189,7 +207,7 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
         </aside>
 
         {/* Thread */}
-        <section className={`${showThread ? 'flex' : 'hidden md:flex'} flex-col min-h-[min(70vh,640px)] md:min-h-0`}>
+        <section className={`${showThread ? 'flex' : 'hidden md:flex'} flex-col min-h-0 h-full`}>
           {!activeId ? (
             <div className="flex-1 flex items-center justify-center p-8 text-sm text-slate-400 text-center">
               {t('messages.pick')}
@@ -198,7 +216,7 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
             <div className="flex-1 flex items-center justify-center text-sm text-slate-400">{t('common.loading')}</div>
           ) : (
             <>
-              <div className="flex items-center gap-2 px-3 sm:px-4 py-3 border-b border-slate-100 bg-[#f8fafc]">
+              <div className="flex items-center gap-2 px-3 sm:px-4 py-3 border-b border-slate-100 bg-[#f8fafc] shrink-0">
                 <button
                   type="button"
                   className="md:hidden h-10 w-10 inline-flex items-center justify-center rounded-xl text-slate-600 hover:bg-white"
@@ -220,7 +238,7 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-2.5 bg-[linear-gradient(180deg,#fafbfc,#f6f4f0)]">
+              <div ref={threadScrollRef} className="flex-1 overflow-y-auto overscroll-contain min-h-0 px-3 sm:px-4 py-4 space-y-2.5 bg-[linear-gradient(180deg,#fafbfc,#f6f4f0)]">
                 {(thread?.messages || []).map((m) => (
                   <div key={m.id} className={`flex ${m.mine ? 'justify-end' : 'justify-start'}`}>
                     <div
@@ -237,12 +255,11 @@ export default function MessagesView({ t, locale, auth, setAuthModal, initialId,
                     </div>
                   </div>
                 ))}
-                <div ref={bottomRef} />
               </div>
 
-              {err && <p className="px-4 text-xs text-red-600">{err}</p>}
+              {err && <p className="px-4 text-xs text-red-600 shrink-0">{err}</p>}
 
-              <div className="border-t border-slate-100 p-3 sm:p-4 bg-white pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              <div className="border-t border-slate-100 p-3 sm:p-4 bg-white pb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0">
                 <div className="flex gap-2 items-end">
                   <textarea
                     rows={2}
