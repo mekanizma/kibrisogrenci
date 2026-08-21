@@ -166,9 +166,8 @@ grant select (
   search_vector_tr, search_vector_en, is_demo, created_at, updated_at
 ) on table public.listings to anon, authenticated;
 
--- Owners still need address_private via authenticated when they own the row:
--- grant column, but RLS still applies; we further gate with a policy check via RPC.
-grant select (address_private, rejection_reason) on table public.listings to authenticated;
+-- address_private / rejection_reason: service_role only (API uses admin client for owners)
+revoke select (address_private, rejection_reason) on table public.listings from anon, authenticated;
 
 -- ---- Drop weak / incomplete policies and recreate tightly ----
 drop policy if exists llp_public_select on public.landlord_profiles;
