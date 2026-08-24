@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80">
+  <defs>
+    <linearGradient id="g" x1="20" y1="8" x2="64" y2="72" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1e3a5f" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#9f1239"/>
+    </linearGradient>
+  </defs>
+  <circle cx="40" cy="40" r="38" fill="#fff"/>
+  <circle cx="40" cy="40" r="36" fill="#9f1239"/>
+  <circle cx="40" cy="40" r="29" fill="none" stroke="#1e3a5f" stroke-width="1.6" opacity="0.85"/>
+  <path d="M40 14 L44 22 L40 20 L36 22 Z" fill="#1e3a5f"/>
+  <text x="40" y="46" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="18" font-weight="700" fill="#fff">GAÜ</text>
+</svg>

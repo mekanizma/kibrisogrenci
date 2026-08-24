@@ -4,9 +4,10 @@ import {
   LISTINGS, UNIVERSITIES, PACKAGES, PRICE_INDEX, FX_TO_GBP, CURRENCIES,
   toGbp, findIndex, publicListing, getListingByRef, HERO_IMAGE,
 } from '@/lib/seed';
-import { getRequestUser, requireUser, requireAdmin, isMockMode, hashIp } from '@/lib/auth';
+import { getRequestUser, requireUser, requireAdmin, isMockMode, allowMockDemoAuth, hashIp } from '@/lib/auth';
 import * as db from '@/lib/db';
 import { KKTC_CITIES, slugifyUniversityName, universityShort } from '@/lib/universities';
+import { FX_FALLBACK_TO_GBP, getLiveFxToGbp } from '@/lib/fx';
 
 const json = (data, status = 200, cache = 'no-store') =>
   NextResponse.json(data, { status, headers: { 'Cache-Control': cache } });
@@ -263,8 +264,23 @@ async function handleMock(request, route, path, method, sp) {
         ...u,
         listings_count: LISTINGS.filter((l) => l.uni === u.id).length,
       }));
+    let fx_to_gbp = { ...FX_FALLBACK_TO_GBP, ...FX_TO_GBP };
+    let fx_source = 'fallback';
+    let fx_date = null;
+    try {
+      const live = await getLiveFxToGbp();
+      if (live?.fxToGbp) {
+        fx_to_gbp = { ...FX_FALLBACK_TO_GBP, ...live.fxToGbp };
+        fx_source = live.source;
+        fx_date = live.date;
+      }
+    } catch { /* keep seed fallback */ }
     return json({
-      fx_to_gbp: FX_TO_GBP, currencies: CURRENCIES, hero_image: HERO_IMAGE,
+      fx_to_gbp,
+      fx_date,
+      fx_source,
+      currencies: CURRENCIES,
+      hero_image: HERO_IMAGE,
       universities: mapped,
       all_universities: mapped, packages: PACKAGES,
       stats: {
@@ -313,8 +329,8 @@ async function handleMock(request, route, path, method, sp) {
     const user = await getRequestUser(request);
     const denied = requireUser(user);
     if (denied) {
-      // Dev-only fallback: only if MOCK_ALLOW_DEMO_AUTH=true
-      if (process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+      // Dev-only fallback: only if MOCK_ALLOW_DEMO_AUTH=true (never in production)
+      if (!allowMockDemoAuth()) return json(denied, denied.status);
       const body = await request.json().catch(() => ({}));
       if (!body.signedIn || !body.studentId) return json({ error: 'auth_required' }, 401);
       const l = getListingByRef(body.ref);
@@ -349,11 +365,11 @@ async function handleMock(request, route, path, method, sp) {
     return json({ ok: true, id: rep.id });
   }
 
-  // Landlord / admin mock routes require Bearer admin OR MOCK_ALLOW_DEMO_AUTH
+  // Landlord / admin mock routes require Bearer admin OR MOCK_ALLOW_DEMO_AUTH (dev only)
   if (route.startsWith('my/') || route.startsWith('admin/')) {
     const user = await getRequestUser(request);
     const needsAdmin = route.startsWith('admin/');
-    if (process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') {
+    if (!allowMockDemoAuth()) {
       const gate = needsAdmin ? requireAdmin(user) : requireUser(user);
       if (gate) return json(gate, gate.status);
     }
@@ -600,7 +616,7 @@ async function handleMock(request, route, path, method, sp) {
   if (route === 'messages' && method === 'GET' && !path[1]) {
     const user = await getRequestUser(request);
     const denied = requireUser(user);
-    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+    if (denied && !allowMockDemoAuth()) return json(denied, denied.status);
     const uid = user?.id || 'demo-student';
     const items = mockConversations
       .filter((c) => c.student_id === uid || c.landlord_user_id === uid)
@@ -626,7 +642,7 @@ async function handleMock(request, route, path, method, sp) {
   if (route === 'messages' && method === 'POST' && !path[1]) {
     const user = await getRequestUser(request);
     const denied = requireUser(user);
-    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+    if (denied && !allowMockDemoAuth()) return json(denied, denied.status);
     const uid = user?.id || 'demo-student';
     const body = await request.json().catch(() => ({}));
     const text = String(body.body || '').trim();
@@ -662,7 +678,7 @@ async function handleMock(request, route, path, method, sp) {
   if (path[0] === 'messages' && path[1] === 'unread' && method === 'GET') {
     const user = await getRequestUser(request);
     const denied = requireUser(user);
-    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json({ count: 0 });
+    if (denied && !allowMockDemoAuth()) return json({ count: 0 });
     const uid = user?.id || 'demo-student';
     let count = 0;
     for (const c of mockConversations) {
@@ -677,7 +693,7 @@ async function handleMock(request, route, path, method, sp) {
   if (path[0] === 'messages' && path[1] && path[1] !== 'unread' && method === 'GET') {
     const user = await getRequestUser(request);
     const denied = requireUser(user);
-    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+    if (denied && !allowMockDemoAuth()) return json(denied, denied.status);
     const uid = user?.id || 'demo-student';
     const conv = mockConversations.find((c) => c.id === path[1]);
     if (!conv) return json({ error: 'not_found' }, 404);
@@ -702,7 +718,7 @@ async function handleMock(request, route, path, method, sp) {
   if (path[0] === 'messages' && path[1] && path[1] !== 'unread' && method === 'POST') {
     const user = await getRequestUser(request);
     const denied = requireUser(user);
-    if (denied && process.env.MOCK_ALLOW_DEMO_AUTH !== 'true') return json(denied, denied.status);
+    if (denied && !allowMockDemoAuth()) return json(denied, denied.status);
     const uid = user?.id || 'demo-student';
     const conv = mockConversations.find((c) => c.id === path[1]);
     if (!conv) return json({ error: 'not_found' }, 404);

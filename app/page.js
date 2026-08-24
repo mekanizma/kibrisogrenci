@@ -11,10 +11,11 @@ import {
   Phone, MessageCircle, X, Check, GraduationCap, Building2, Info, Clock,
   BedDouble, Bath, Maximize, Flag, Lock, Sofa, Trees, ShieldAlert, Waypoints, Users, Heart, SlidersHorizontal,
   ArrowRight, Sparkles, Footprints, ChevronRight, ChevronDown, Eye, EyeOff, Mail, User,
+  Wallet,
 } from 'lucide-react';
 import { tFor, LOCALES, LOCALE_LABEL, isRTL, listingLang, isMachineTranslated } from '@/lib/i18n';
 import { createClient } from '@/lib/supabase/client';
-import { api, getAccessToken, refreshSessionIntoAuth, signOutEverywhere, setAccessToken } from '@/lib/api-client';
+import { api, getAccessToken, refreshSessionIntoAuth, signOutEverywhere, setAccessToken, resolveClientRole } from '@/lib/api-client';
 import { MOCK_PHOTOS } from '@/lib/mock-featured';
 import {
   distanceToListing,
@@ -24,7 +25,8 @@ import {
   requestUserLocation,
   setGeoPref,
 } from '@/lib/geo-client';
-import { KKTC_CITIES } from '@/lib/universities';
+import { KKTC_CITIES, UNI_CATALOG, universityLogoSrc } from '@/lib/universities';
+import TurnstileCaptcha, { isTurnstileConfigured } from '@/components/TurnstileCaptcha';
 
 const DashboardView = dynamic(
   () => import('@/components/panels').then((m) => m.DashboardView),
@@ -404,7 +406,7 @@ export default function App() {
           signedIn: true,
           studentId: session.user.id,
           email: session.user.email,
-          role: session.user.app_metadata?.role || session.user.user_metadata?.role || 'landlord',
+          role: resolveClientRole(session.user),
           accessToken: session.access_token,
         });
       } else {
@@ -511,7 +513,7 @@ export default function App() {
         )}
       </main>
 
-      <Footer t={t} config={config} setView={setView} goUniversity={goUniversity} />
+      <Footer t={t} locale={locale} config={config} setView={setView} goUniversity={goUniversity} />
 
       {authModal && (
         <AuthModal
@@ -543,6 +545,32 @@ function BrandMark({ className = 'h-10 w-auto', title = 'Kıbrıs Öğrenci', va
       decoding="async"
       fetchPriority={variant === 'full' ? 'high' : 'auto'}
     />
+  );
+}
+
+function UniversityLogoMark({ university, className = '' }) {
+  const [failed, setFailed] = useState(false);
+  const src = universityLogoSrc(university?.slug);
+  const short = university?.short || 'UNI';
+  if (!src || failed) {
+    return (
+      <span className={`flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200/80 bg-[#eef4f7] text-[10px] font-bold leading-none text-[#0a4d68] ${className}`}>
+        {short.slice(0, 4)}
+      </span>
+    );
+  }
+  return (
+    <span className={`flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200/80 bg-white p-1.5 ${className}`}>
+      <img
+        src={src}
+        alt=""
+        className="h-full w-full object-contain"
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        onError={() => setFailed(true)}
+      />
+    </span>
   );
 }
 
@@ -724,7 +752,6 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
   const [moreOpen, setMoreOpen] = useState(false);
   const [uniOpen, setUniOpen] = useState(false);
   const [uniQ, setUniQ] = useState('');
-  const [uniRegion, setUniRegion] = useState('');
   const uniPickerRef = useRef(null);
 
   useEffect(() => {
@@ -760,10 +787,11 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
 
   const stats = config?.stats;
   const unis = config?.universities || [];
+  const universityTotal = Math.max(unis.length, UNI_CATALOG.length);
   // Derive live fallbacks if config.stats is stale/missing
   const liveStats = {
     listings: stats?.listings ?? unis.reduce((n, u) => n + (u.listings_count || 0), 0),
-    universities: stats?.universities ?? unis.length,
+    universities: universityTotal,
     verified_landlords: stats?.verified_landlords ?? 0,
     cities: stats?.cities ?? new Set(unis.map((u) => u.city).filter(Boolean)).size,
   };
@@ -783,9 +811,6 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
       return ao - bo || String(a).localeCompare(String(b), 'tr');
     });
   })();
-  const regionUnis = uniRegion
-    ? (unisByCity.find(([c]) => c === uniRegion)?.[1] || [])
-    : unisByCity.flatMap(([, list]) => list);
   const selectedUni = unis.find((u) => u.id === uni);
   const uniFilter = uniQ.trim().toLocaleLowerCase('tr');
   const filteredUnisByCity = uniFilter
@@ -799,6 +824,7 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
       ])
       .filter(([, list]) => list.length)
     : unisByCity;
+  const filteredUnis = filteredUnisByCity.flatMap(([, list]) => list);
   const budgetPresets = ({
     TRY: [15000, 25000, 40000],
     GBP: [300, 500, 800],
@@ -947,8 +973,8 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
                   )}
                 </button>
                 {uniOpen && (
-                  <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_60px_-20px_rgba(10,61,84,0.45)]">
-                    <div className="border-b border-slate-100 p-2">
+                  <div className="absolute z-40 mt-2 w-full max-w-[32rem] overflow-hidden rounded-2xl border border-slate-200/90 bg-white ring-1 ring-[#0a4d68]/5 shadow-[0_26px_70px_-24px_rgba(10,61,84,0.5)]">
+                    <div className="border-b border-slate-100 bg-[linear-gradient(180deg,#fbfdff,white)] p-2">
                       <div className="relative">
                         <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                         <input
@@ -956,52 +982,42 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
                           value={uniQ}
                           onChange={(e) => setUniQ(e.target.value)}
                           placeholder={t('home.search_uni')}
-                          className="h-10 w-full rounded-xl border border-slate-200 bg-[#f8fafb] pe-3 ps-9 text-sm outline-none focus:border-[#0a4d68]/40 focus:ring-2 focus:ring-[#0a4d68]/20"
+                          className="h-9 w-full rounded-xl border border-slate-200 bg-[#f8fafb] pe-3 ps-9 text-sm outline-none focus:border-[#0a4d68]/40 focus:ring-2 focus:ring-[#0a4d68]/20"
                         />
                       </div>
                     </div>
-                    <div className="max-h-64 overflow-y-auto overscroll-contain py-1" role="listbox">
+                    <div className="max-h-44 overflow-y-auto overscroll-contain py-1 ko-hide-scroll" role="listbox">
                       <button
                         type="button"
                         role="option"
                         aria-selected={!uni}
                         onClick={() => { setUni(''); setUniOpen(false); setUniQ(''); }}
-                        className={`flex w-full items-center gap-2 px-3 py-2.5 text-start text-sm hover:bg-[var(--ko-mist)] ${!uni ? 'bg-[var(--ko-mist)] font-semibold text-[#0a4d68]' : 'text-slate-700'}`}
+                        className={`mx-2 flex w-[calc(100%-1rem)] items-center gap-2 rounded-xl px-3 py-2 text-start text-sm transition-colors hover:bg-[var(--ko-mist)] ${!uni ? 'bg-[var(--ko-mist)] font-semibold text-[#0a4d68]' : 'text-slate-700'}`}
                       >
                         {t('search.any_university')}
                       </button>
-                      {filteredUnisByCity.length === 0 && (
+                      {filteredUnis.length === 0 && (
                         <p className="px-3 py-4 text-center text-sm text-slate-400">{t('search.no_results')}</p>
                       )}
-                      {filteredUnisByCity.map(([city, list]) => (
-                        <div key={city}>
-                          <div className="sticky top-0 z-[1] bg-[#f4f7f9] px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                            {city}
-                          </div>
-                          {list.map((u) => (
-                            <button
-                              key={u.id}
-                              type="button"
-                              role="option"
-                              aria-selected={uni === u.id}
-                              onClick={() => { setUni(u.id); setUniOpen(false); setUniQ(''); }}
-                              className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-start hover:bg-[var(--ko-mist)] ${uni === u.id ? 'bg-[var(--ko-mist)]' : ''}`}
-                            >
-                              <span className="inline-flex h-7 min-w-[2.75rem] items-center justify-center rounded-md bg-[#0a4d68]/10 px-1.5 text-[10px] font-bold text-[#0a4d68]">
-                                {u.short}
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-medium text-[#0a3d54]">
-                                  {locale === 'tr' ? u.name_tr : u.name_en}
-                                </span>
-                                <span className="block text-[11px] text-slate-500 tabular-nums">
-                                  {u.listings_count ?? 0} {t('universities.listings_count')}
-                                </span>
-                              </span>
-                              {uni === u.id && <Check className="h-4 w-4 shrink-0 text-[#0a4d68]" />}
-                            </button>
-                          ))}
-                        </div>
+                      {filteredUnis.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          role="option"
+                          aria-selected={uni === u.id}
+                          onClick={() => { setUni(u.id); setUniOpen(false); setUniQ(''); }}
+                          className={`mx-2 my-0.5 flex w-[calc(100%-1rem)] items-center rounded-xl px-3 py-2 text-start transition-colors hover:bg-[var(--ko-mist)] ${uni === u.id ? 'bg-[var(--ko-mist)]' : ''}`}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-[#0a3d54]">
+                              {locale === 'tr' ? u.name_tr : u.name_en}
+                            </span>
+                            <span className="block truncate text-[11px] text-slate-500">
+                              {u.city}
+                            </span>
+                          </span>
+                          {uni === u.id && <Check className="h-4 w-4 shrink-0 text-[#0a4d68]" />}
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -1031,24 +1047,33 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
               </div>
             </div>
 
-            <div className="mt-3.5 flex flex-wrap gap-1.5">
-              {budgetPresets.map((n) => {
-                const active = String(budget) === String(n);
-                return (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setBudget(active ? '' : String(n))}
-                    className={`h-8 rounded-full border px-3 text-xs font-semibold transition-colors ${active ? 'border-[#0a4d68] bg-[#0a4d68] text-white' : 'border-slate-200 bg-[#f6f4f0] text-[#0a3d54] hover:border-[#0a4d68]/40'}`}
-                  >
-                    ≤ {SYMBOL[currency]}{n.toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}
-                  </button>
-                );
-              })}
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-stretch">
+              <div className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-[#f7f8fa] p-1">
+                <div className="mb-1 flex items-center gap-1.5 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                  <Wallet className="h-3 w-3" />
+                  {t('search.budget')}
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  {budgetPresets.map((n) => {
+                    const active = String(budget) === String(n);
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setBudget(active ? '' : String(n))}
+                        className={`h-10 rounded-xl px-1.5 text-center text-[12px] sm:text-[13px] font-semibold tabular-nums transition-colors ${active ? 'bg-[#0a4d68] text-white shadow-sm' : 'bg-white text-[#0a3d54] hover:bg-slate-100'}`}
+                      >
+                        {SYMBOL[currency]}{n.toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}
+                        <span className="ms-0.5 text-[10px] font-medium opacity-70">{t('home.budget_max')}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setMoreOpen((v) => !v)}
-                className={`ms-auto inline-flex h-8 items-center gap-1 rounded-full border px-3 text-xs font-semibold transition-colors ${moreOpen ? 'border-[#0a4d68] bg-[var(--ko-mist)] text-[#0a4d68]' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
+                className={`inline-flex h-12 sm:h-auto sm:min-w-[7.5rem] items-center justify-center gap-1.5 rounded-2xl border px-4 text-xs font-semibold transition-colors ${moreOpen ? 'border-[#0a4d68] bg-[#0a4d68] text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-[#0a4d68]/40 hover:text-[#0a4d68]'}`}
               >
                 <SlidersHorizontal className="h-3.5 w-3.5" />
                 {t('home.more_options')}
@@ -1186,102 +1211,54 @@ function HomeView({ t, locale, currency, fx, config, goSearch, goListing, goUniv
         </div>
       </section>
 
-      <section className="relative mt-4 overflow-hidden py-16 md:py-24">
+      <section className="relative mt-4 overflow-hidden py-12 md:py-16">
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,#eef4f7_0%,#f6f4f0_48%,#f6f4f0_100%)]" />
         <div className="pointer-events-none absolute -top-24 start-1/2 h-64 w-[42rem] -translate-x-1/2 rounded-full bg-[#0a4d68]/08 blur-3xl" />
         <div className="container relative">
-          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between lg:gap-12">
-            <div className="max-w-xl">
-              <div className="inline-flex items-center gap-2 rounded-full border border-[#0a3d54]/10 bg-white/80 px-3 py-1 text-[11px] font-semibold tracking-wide text-[#0a4d68]">
-                <GraduationCap className="h-3.5 w-3.5" />
-                {unis.length} {t('home.campuses')}
-              </div>
-              <h2 className="ko-display mt-3 text-3xl md:text-4xl font-semibold text-[#0a3d54] tracking-tight">
+          <div className="max-w-3xl">
+            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+              <span className="inline-flex h-7 w-10 shrink-0 overflow-hidden rounded-md border border-slate-200/80 bg-white shadow-sm" aria-hidden>
+                <img
+                  src="/kktc-flag.png"
+                  alt=""
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                  draggable={false}
+                />
+              </span>
+              <h2 className="ko-display text-2xl sm:text-3xl md:text-[2rem] font-semibold text-[#0a3d54] tracking-tight">
                 {t('universities.title')}
               </h2>
-              <p className="mt-2 text-sm sm:text-base text-slate-500 leading-relaxed">
-                {t('home.unis_sub')}
-              </p>
+              <span className="inline-flex items-center rounded-full bg-[#dbeafe] px-2.5 py-1 text-[10px] sm:text-[11px] font-bold uppercase tracking-wide text-[#1d4ed8] tabular-nums">
+                {t('universities.count_badge', { n: universityTotal })}
+              </span>
             </div>
-            <div className="flex gap-2 overflow-x-auto ko-hide-scroll -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 lg:max-w-[34rem] lg:flex-wrap lg:justify-end lg:overflow-visible">
-              <button
-                type="button"
-                onClick={() => setUniRegion('')}
-                className={`shrink-0 h-10 rounded-full px-4 text-sm font-semibold transition-colors ${!uniRegion ? 'bg-[#0a3d54] text-white shadow-sm' : 'bg-white/90 text-[#0a3d54] border border-[#0a3d54]/10 hover:bg-white'}`}
-              >
-                {t('home.all_regions')}
-              </button>
-              {unisByCity.map(([city, list]) => (
-                <button
-                  key={city}
-                  type="button"
-                  onClick={() => setUniRegion(city)}
-                  className={`shrink-0 h-10 rounded-full px-4 text-sm font-semibold transition-colors ${uniRegion === city ? 'bg-[#0a3d54] text-white shadow-sm' : 'bg-white/90 text-[#0a3d54] border border-[#0a3d54]/10 hover:bg-white'}`}
-                >
-                  {city}
-                  <span className={`ms-1.5 tabular-nums ${uniRegion === city ? 'text-white/70' : 'text-slate-400'}`}>{list.length}</span>
-                </button>
-              ))}
-            </div>
+            <p className="mt-2 text-sm sm:text-base text-slate-500 leading-relaxed">
+              {t('home.unis_sub')}
+            </p>
           </div>
 
-          <div className="mt-8 sm:mt-10 overflow-hidden rounded-[1.75rem] border border-[#0a3d54]/10 bg-white/95 shadow-[0_30px_80px_-40px_rgba(10,61,84,0.45)] backdrop-blur-sm">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 sm:px-6 py-3.5 bg-[linear-gradient(90deg,rgba(232,242,246,0.9),rgba(255,255,255,0.6))]">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#0a4d68] text-white">
-                  <MapPin className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <div className="truncate font-semibold text-[#0a3d54]">
-                    {uniRegion || t('home.all_regions')}
-                  </div>
-                  <div className="text-[11px] text-slate-500 tabular-nums">
-                    {regionUnis.length} {t('home.campuses')}
-                  </div>
-                </div>
-              </div>
-              {uniRegion && (
-                <button
-                  type="button"
-                  onClick={() => goSearch({ city: uniRegion })}
-                  className="shrink-0 inline-flex h-9 items-center gap-1 rounded-full border border-[#0a3d54]/12 bg-white px-3 text-xs font-semibold text-[#0a4d68] hover:bg-[var(--ko-mist)]"
-                >
-                  {t('universities.explore')}
-                  <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
-                </button>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2">
-              {regionUnis.map((u) => (
+          <div className="relative mt-6 sm:mt-8 -mx-4 px-4 sm:mx-0 sm:px-0">
+            <div
+              className="ko-uni-scroll ko-hide-scroll"
+              aria-label={t('universities.title')}
+            >
+              {unis.map((u) => (
                 <button
                   key={u.id}
                   type="button"
                   onClick={() => goUniversity(u.slug)}
-                  className="group flex items-center gap-3.5 border-b border-slate-100 px-4 sm:px-5 py-4 text-start transition-colors last:border-b-0 hover:bg-[var(--ko-mist)]/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0a4d68]/30 md:odd:border-e md:[&:nth-last-child(-n+2)]:border-b-0"
+                  className="group flex min-h-[4.35rem] snap-start items-center gap-3 rounded-2xl border border-slate-200/90 bg-white px-3 py-3 text-start shadow-[0_1px_0_rgba(10,61,84,0.04)] transition-all hover:border-[#0a4d68]/18 hover:bg-[#fbfdfe] hover:shadow-[0_10px_28px_-18px_rgba(10,61,84,0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0a4d68]/25 active:scale-[0.99]"
                 >
-                  <span className="relative flex h-12 min-w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[linear-gradient(145deg,#0a4d68,#0e6a7a)] px-1 text-[9px] sm:text-[10px] font-bold tracking-wide text-white shadow-[0_10px_24px_-12px_rgba(10,77,104,0.7)]">
-                    <span className="absolute inset-0 opacity-30" style={{ backgroundImage: 'radial-gradient(circle at 30% 20%, white, transparent 55%)' }} />
-                    <span className="relative text-center leading-tight">{u.short}</span>
-                  </span>
+                  <UniversityLogoMark university={u} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[14px] sm:text-[15px] font-semibold text-[#0a3d54] leading-snug">
+                    <span className="block text-[13px] sm:text-sm font-semibold leading-snug text-[#0a3d54] line-clamp-2">
                       {locale === 'tr' ? u.name_tr : u.name_en}
                     </span>
-                    <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] sm:text-xs text-slate-500">
-                      <span className="inline-flex items-center gap-1">
-                        <MapPin className="h-3 w-3 text-slate-400" />
-                        {u.city}
-                      </span>
-                      <span className="text-slate-300">·</span>
-                      <span className="tabular-nums">
-                        <span className="font-semibold text-[#0a4d68]">{u.listings_count ?? 0}</span>
-                        {' '}{t('universities.listings_count')}
-                      </span>
+                    <span className="mt-0.5 block truncate text-xs text-slate-500">
+                      {u.city}
                     </span>
-                  </span>
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-50 text-slate-300 transition-all group-hover:bg-[#0a4d68] group-hover:text-white">
-                    <ChevronRight className="h-4 w-4 rtl:rotate-180" />
                   </span>
                 </button>
               ))}
@@ -1430,7 +1407,11 @@ function SearchView({ t, locale, currency, fx, config, goListing, initialFilters
       <FilterField label={t('search.university')}>
         <select className={selCls} value={f.university} onChange={e => setF(s => ({ ...s, university: e.target.value }))}>
           <option value="">{t('search.any_university')}</option>
-          {unis.map(u => <option key={u.id} value={u.id}>{u.short || u.name_tr || u.name_en}</option>)}
+          {unis.map((u) => (
+            <option key={u.id} value={u.id}>
+              {locale === 'tr' ? (u.name_tr || u.name_en || u.short) : (u.name_en || u.name_tr || u.short)}
+            </option>
+          ))}
         </select>
       </FilterField>
       <FilterField label={t('search.max_walk')}>
@@ -2383,7 +2364,7 @@ function StaticView({ t, locale, kind }) {
 // ---------------------------------------------------------------------------
 // Footer
 // ---------------------------------------------------------------------------
-function Footer({ t, config, setView, goUniversity }) {
+function Footer({ t, locale, config, setView, goUniversity }) {
   return (
     <footer className="relative mt-10 overflow-hidden bg-[#062636] text-white/80">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(10,77,104,0.55),transparent_50%)]" />
@@ -2408,8 +2389,20 @@ function Footer({ t, config, setView, goUniversity }) {
         <div>
           <div className="font-semibold text-white mb-3">{t('universities.title')}</div>
           <ul className="space-y-2 text-sm">
-            {(config?.universities || []).slice(0, 5).map(u => (
-              <li key={u.id}><button onClick={() => goUniversity(u.slug)} className="hover:text-white transition-colors">{u.short}</button></li>
+            {(config?.universities || [])
+              .slice()
+              .sort((a, b) => {
+                if (a.slug === 'final-international-university') return -1;
+                if (b.slug === 'final-international-university') return 1;
+                return 0;
+              })
+              .slice(0, 5)
+              .map(u => (
+              <li key={u.id}>
+                <button onClick={() => goUniversity(u.slug)} className="hover:text-white transition-colors">
+                  {locale === 'tr' ? (u.name_tr || u.short) : (u.name_en || u.short)}
+                </button>
+              </li>
             ))}
           </ul>
         </div>
@@ -2439,13 +2432,24 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
   const [msg, setMsg] = useState('');
   const [msgOk, setMsgOk] = useState(false);
   const [awaitingEmail, setAwaitingEmail] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaReset, setCaptchaReset] = useState(0);
+  const captchaRequired = isTurnstileConfigured();
 
   const inp = 'w-full h-12 rounded-2xl border border-slate-200/90 bg-[#f8fafb] px-3.5 text-sm mt-1.5 outline-none focus:bg-white focus:ring-2 focus:ring-[#0a4d68]/25 focus:border-[#0a4d68]/35 transition';
   const siteUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000');
 
+  const resetCaptcha = useCallback(() => {
+    setCaptchaToken('');
+    setCaptchaReset((n) => n + 1);
+  }, []);
+
   const mapAuthError = (error) => {
     const raw = String(error?.message || error || '');
     const lower = raw.toLowerCase();
+    if (lower.includes('captcha') || lower.includes('turnstile') || lower.includes('verification failed')) {
+      return t('auth.err_captcha_fail');
+    }
     if (lower.includes('invalid login credentials') || lower.includes('invalid_credentials')) {
       return t('auth.err_invalid');
     }
@@ -2467,16 +2471,28 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
     return null;
   };
 
+  const requireCaptcha = () => {
+    if (!captchaRequired) return null;
+    if (!captchaToken) return t('auth.err_captcha');
+    return null;
+  };
+
+  const captchaOptions = captchaToken ? { captchaToken } : {};
+
   const sendPasswordReset = async () => {
     const supabase = createClient();
     if (!supabase) { setMsg(t('auth.err_config')); setMsgOk(false); return; }
     const v = validate('reset');
     if (v) { setMsg(v); setMsgOk(false); return; }
+    const c = requireCaptcha();
+    if (c) { setMsg(c); setMsgOk(false); return; }
     setBusy(true); setMsg(''); setMsgOk(false);
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${siteUrl}/`,
+      ...captchaOptions,
     });
     setBusy(false);
+    resetCaptcha();
     if (error) { setMsg(mapAuthError(error)); setMsgOk(false); return; }
     setMsg(t('auth.reset_sent'));
     setMsgOk(true);
@@ -2487,6 +2503,8 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
     if (!supabase) { setMsg(t('auth.err_config')); setMsgOk(false); return; }
     const v = validate(authMode);
     if (v) { setMsg(v); setMsgOk(false); return; }
+    const c = requireCaptcha();
+    if (c) { setMsg(c); setMsgOk(false); return; }
 
     setBusy(true); setMsg(''); setMsgOk(false);
     try {
@@ -2496,6 +2514,7 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
           password,
           options: {
             emailRedirectTo: `${siteUrl}/`,
+            ...captchaOptions,
             data: {
               // Single free account type — everyone can search and list
               role: 'landlord',
@@ -2508,7 +2527,7 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
             },
           },
         });
-        if (error) { setMsg(mapAuthError(error)); setBusy(false); return; }
+        if (error) { setMsg(mapAuthError(error)); setBusy(false); resetCaptcha(); return; }
         if (data.session) {
           setAccessToken(data.session.access_token);
           const profilePayload = {
@@ -2539,10 +2558,11 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
         const { data, error } = await supabase.auth.signInWithPassword({
           email: email.trim().toLowerCase(),
           password,
+          options: captchaOptions,
         });
-        if (error) { setMsg(mapAuthError(error)); setBusy(false); return; }
+        if (error) { setMsg(mapAuthError(error)); setBusy(false); resetCaptcha(); return; }
         setAccessToken(data.session.access_token);
-        const metaRole = data.user.app_metadata?.role || data.user.user_metadata?.role || 'landlord';
+        const metaRole = resolveClientRole(data.user);
         setAuth({
           signedIn: true,
           studentId: data.user.id,
@@ -2552,7 +2572,7 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
         });
         onClose();
       }
-    } catch (e) { setMsg(t('auth.err')); }
+    } catch (e) { setMsg(t('auth.err')); resetCaptcha(); }
     setBusy(false);
   };
 
@@ -2566,11 +2586,11 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
           <h2 className="ko-display text-xl font-semibold text-[#0a3d54]">{t('auth.check_email_title')}</h2>
           <p className="text-sm text-slate-600 mt-2 leading-relaxed px-2">{t('auth.check_email')}</p>
           <p className="text-xs text-slate-400 mt-2" dir="ltr">{email}</p>
-          <button type="button" onClick={() => { setAwaitingEmail(false); setMode('signin'); setMsg(''); }}
+          <button type="button" onClick={() => { setAwaitingEmail(false); setMode('signin'); setMsg(''); resetCaptcha(); }}
             className="mt-6 w-full h-12 rounded-2xl bg-[#0a4d68] text-white font-semibold">
             {t('auth.signin')}
           </button>
-          <button type="button" onClick={() => { setAwaitingEmail(false); setMsg(''); }}
+          <button type="button" onClick={() => { setAwaitingEmail(false); setMsg(''); resetCaptcha(); }}
             className="mt-2 w-full h-11 rounded-2xl text-sm font-medium text-slate-500">
             {t('auth.back_to_form')}
           </button>
@@ -2597,7 +2617,7 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
 
       <div className="mt-4 grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-100">
         {[['signin', t('auth.signin')], ['signup', t('auth.signup')]].map(([k, label]) => (
-          <button key={k} type="button" onClick={() => { setMode(k); setMsg(''); setMsgOk(false); }}
+          <button key={k} type="button" onClick={() => { setMode(k); setMsg(''); setMsgOk(false); resetCaptcha(); }}
             className={`h-10 rounded-xl text-sm font-semibold transition ${mode === k ? 'bg-white text-[#0a4d68] shadow-sm' : 'text-slate-500'}`}>
             {label}
           </button>
@@ -2605,7 +2625,7 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
       </div>
 
       <form
-        className="mt-4 space-y-3.5 max-h-[min(62vh,520px)] overflow-y-auto pe-1 -me-1"
+        className="mt-4 space-y-3.5 max-h-[min(70vh,560px)] overflow-y-auto pe-1 -me-1 overscroll-contain"
         onSubmit={(e) => { e.preventDefault(); realAuth(mode); }}
       >
         {mode === 'signup' && (
@@ -2674,6 +2694,23 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
           </div>
         )}
 
+        {captchaRequired && (
+          <div className="pt-0.5">
+            <label className="text-xs font-semibold text-slate-500">{t('auth.captcha_label')} *</label>
+            <p className="text-[11px] text-slate-400 mt-0.5 mb-2">{t('auth.captcha_hint')}</p>
+            <TurnstileCaptcha
+              resetKey={`${mode}-${captchaReset}`}
+              onToken={setCaptchaToken}
+              onExpire={resetCaptcha}
+              onError={() => {
+                setCaptchaToken('');
+                setMsg(t('auth.err_captcha_fail'));
+                setMsgOk(false);
+              }}
+            />
+          </div>
+        )}
+
         {msg && (
           <p className={`text-xs rounded-2xl px-3 py-2.5 leading-relaxed ${msgOk ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-red-50 text-red-700'}`}>
             {msg}
@@ -2689,14 +2726,14 @@ function AuthModal({ t, locale, onClose, setAuth, initialMode = 'signin' }) {
           </div>
         )}
 
-        <button type="submit" disabled={busy}
-          className="w-full h-12 rounded-2xl bg-[#0a4d68] text-white font-semibold disabled:opacity-60 shadow-sm shadow-[#0a4d68]/20 inline-flex items-center justify-center gap-2">
+        <button type="submit" disabled={busy || (captchaRequired && !captchaToken)}
+          className="w-full h-12 rounded-2xl bg-[#0a4d68] text-white font-semibold disabled:opacity-60 shadow-sm shadow-[#0a4d68]/20 inline-flex items-center justify-center gap-2 min-h-12">
           {busy ? t('common.loading') : (mode === 'signup' ? t('auth.signup') : t('auth.signin'))}
           {!busy && <ArrowRight className="h-4 w-4 rtl:rotate-180" />}
         </button>
 
-        <button type="button" onClick={() => { setMode(mode === 'signup' ? 'signin' : 'signup'); setMsg(''); }}
-          className="w-full text-center text-sm font-medium text-[#0a4d68] py-1">
+        <button type="button" onClick={() => { setMode(mode === 'signup' ? 'signin' : 'signup'); setMsg(''); resetCaptcha(); }}
+          className="w-full text-center text-sm font-medium text-[#0a4d68] py-1 min-h-11">
           {mode === 'signup' ? t('auth.switch_signin') : t('auth.switch_signup')}
         </button>
 

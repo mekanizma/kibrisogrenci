@@ -54,22 +54,29 @@ async function smtpCanary() {
 async function fxRefresh() {
   log({ job: 'fx_refresh', status: 'start' });
   try {
-    const res = await fetch('https://api.frankfurter.app/latest?from=GBP&to=TRY,USD,EUR');
+    // Frankfurter v2: https://frankfurter.dev — flat JSON, no API key
+    const res = await fetch(
+      'https://api.frankfurter.dev/v2/rates?base=GBP&quotes=TRY,USD,EUR',
+      { headers: { Accept: 'application/json' } },
+    );
     if (!res.ok) throw new Error(`fx http ${res.status}`);
     const body = await res.json();
-    const date = body.date || new Date().toISOString().slice(0, 10);
-    const rows = Object.entries(body.rates || {}).map(([quote, rate]) => ({
-      base_currency: 'GBP',
-      quote_currency: quote,
-      rate,
-      rate_date: date,
-      fetched_at: new Date().toISOString(),
-    }));
+    if (!Array.isArray(body) || !body.length) throw new Error('fx empty response');
+    const fetchedAt = new Date().toISOString();
+    const rows = body
+      .map((row) => ({
+        base_currency: 'GBP',
+        quote_currency: String(row.quote || '').toUpperCase(),
+        rate: Number(row.rate),
+        rate_date: row.date || fetchedAt.slice(0, 10),
+        fetched_at: fetchedAt,
+      }))
+      .filter((r) => r.quote_currency && Number.isFinite(r.rate) && r.rate > 0);
     if (rows.length) {
       await admin().from('fx_rates').upsert(rows, { onConflict: 'base_currency,quote_currency,rate_date' });
     }
-    await recordHealth('fx_rates', 'ok', `updated ${rows.length} rates`);
-    log({ job: 'fx_refresh', status: 'done', rows: rows.length });
+    await recordHealth('fx_rates', 'ok', `frankfurter updated ${rows.length} rates`);
+    log({ job: 'fx_refresh', status: 'done', rows: rows.length, date: rows[0]?.rate_date });
   } catch (e) {
     await recordHealth('fx_rates', 'fail', String(e.message || e));
     log({ job: 'fx_refresh', status: 'error', err: String(e.message || e) });
