@@ -8,6 +8,12 @@ import { getRequestUser, requireUser, requireAdmin, isMockMode, allowMockDemoAut
 import * as db from '@/lib/db';
 import { KKTC_CITIES, slugifyUniversityName, universityShort } from '@/lib/universities';
 import { FX_FALLBACK_TO_GBP, getLiveFxToGbp } from '@/lib/fx';
+import {
+  comparePremiumThenDate,
+  computePremiumUntil,
+  getPremiumPlan,
+  mapPremiumFields,
+} from '@/lib/premium';
 
 const json = (data, status = 200, cache = 'no-store') =>
   NextResponse.json(data, { status, headers: { 'Cache-Control': cache } });
@@ -201,7 +207,15 @@ function filterListings(sp) {
   if (amen.length) items = items.filter((l) => amen.every((a) => l.amenities.includes(a)));
   if (g('price_min')) items = items.filter((l) => l.price_gbp >= Number(g('price_min')));
   if (g('price_max')) items = items.filter((l) => l.price_gbp <= Number(g('price_max')));
-  if (g('featured') === '1') items = items.filter((l) => l.featured);
+  if (g('featured') === '1') {
+    items = items.filter((l) => {
+      const p = mapPremiumFields(l);
+      return p.featured || l.featured;
+    });
+    if (!items.length) {
+      items = LISTINGS.slice().filter((l) => l.featured);
+    }
+  }
   const sort = g('sort') || 'new';
   if (sort === 'price_asc') items.sort((a, b) => a.price_gbp - b.price_gbp);
   else if (sort === 'price_desc') items.sort((a, b) => b.price_gbp - a.price_gbp);
@@ -235,8 +249,18 @@ function filterListings(sp) {
         return da - db;
       });
     }
+  } else if (g('featured') === '1') {
+    items.sort((a, b) => {
+      const pa = mapPremiumFields(a);
+      const pb = mapPremiumFields(b);
+      if ((pb.premium_rank || 0) !== (pa.premium_rank || 0)) {
+        return (pb.premium_rank || 0) - (pa.premium_rank || 0);
+      }
+      return (b.view_count || 0) - (a.view_count || 0);
+    });
+  } else {
+    items.sort(comparePremiumThenDate);
   }
-  else items.sort((a, b) => new Date(b.published_at) - new Date(a.published_at));
   return items;
 }
 
@@ -378,12 +402,19 @@ async function handleMock(request, route, path, method, sp) {
   if (route === 'my/listings' && method === 'GET') {
     const owner = sp.get('owner') || 'Ayşe Yılmaz';
     const mine = LISTINGS.filter((l) => l.landlord.name === owner)
-      .map((l) => ({
-        id: l.id, reference_code: l.reference_code, title: l.title_tr, status: 'published',
-        price: l.price, city: l.city, view_count: l.view_count, contact_reveal_count: l.contact_reveal_count,
-        photo: l.photos[0], price_index: priceIndexInfo(l),
-      }))
-      .concat(userListings.filter((u) => u.owner === owner));
+      .map((l) => {
+        const prem = mapPremiumFields(l);
+        return {
+          id: l.id, reference_code: l.reference_code, title: l.title_tr, status: 'published',
+          price: l.price, city: l.city, view_count: l.view_count, contact_reveal_count: l.contact_reveal_count,
+          photo: l.photos[0], price_index: priceIndexInfo(l),
+          premium_tier: prem.premium_tier, premium_until: prem.premium_until, premium: prem.premium,
+        };
+      })
+      .concat(userListings.filter((u) => u.owner === owner).map((u) => {
+        const prem = mapPremiumFields(u);
+        return { ...u, premium_tier: prem.premium_tier, premium_until: prem.premium_until, premium: prem.premium };
+      }));
     const pkg = PACKAGES.find((p) => p.name === 'Pro');
     return json({ items: mine, quota: { used: mine.length, total: pkg.listing_quota, package: pkg.name } });
   }
@@ -403,6 +434,49 @@ async function handleMock(request, route, path, method, sp) {
     userListings.unshift(item);
     audit(owner, 'listing.create', 'listing', item.id, null, { status: item.status });
     return json({ ok: true, item });
+  }
+  if (path[0] === 'my' && path[1] === 'listings' && path[2] && path[3] === 'promote' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const plan = getPremiumPlan(b.plan);
+    if (!plan) return json({ error: 'invalid_plan' }, 400);
+    const id = path[2];
+    const seed = LISTINGS.find((l) => l.id === id);
+    const created = userListings.find((u) => u.id === id);
+    const target = seed || created;
+    if (!target) return json({ error: 'not_found' }, 404);
+    if (created && created.status !== 'published') return json({ error: 'listing_not_published' }, 400);
+    const until = computePremiumUntil(plan.id);
+    target.premium_tier = plan.id;
+    target.premium_until = until;
+    target.featured = true;
+    audit(b.owner || 'Ayşe Yılmaz', 'listing.promote', 'listing', id, null, { plan: plan.id, until });
+    const prem = mapPremiumFields(target);
+    return json({
+      ok: true,
+      payment_pending: true,
+      item: {
+        id: target.id,
+        reference_code: target.reference_code,
+        title: target.title_tr || target.title,
+        status: created?.status || 'published',
+        premium_tier: prem.premium_tier,
+        premium_until: prem.premium_until,
+        premium: prem.premium,
+      },
+      plan: {
+        id: plan.id,
+        duration_days: plan.duration_days,
+        rank: plan.rank,
+        features: {
+          boost_search: plan.boost_search,
+          gold_border: plan.gold_border,
+          badge: plan.badge,
+          featured_section: plan.featured_section,
+          sparkle: plan.sparkle,
+          priority_support: plan.priority_support,
+        },
+      },
+    });
   }
   if (route === 'my/analytics' && method === 'GET') {
     const weeks = ['-5w', '-4w', '-3w', '-2w', '-1w', 'now'];
@@ -481,7 +555,49 @@ async function handleMock(request, route, path, method, sp) {
     audit('Admin', 'user.status', 'user', b.id, { status: before }, { status: b.status });
     return json({ ok: true });
   }
-  if (route === 'admin/invoices' && method === 'GET') return json({ items: invoices });
+  if (route === 'admin/invoices' && method === 'GET') {
+    const mockOrders = globalThis.__koShopierOrders || new Map();
+    const shopierItems = [...mockOrders.values()].map((o) => ({
+      id: o.platform_order_id,
+      source: 'shopier',
+      user: o.buyer_email || o.user_id || 'Demo',
+      user_email: o.buyer_email || null,
+      package: `Premium ${String(o.plan_id || '').toUpperCase()}`,
+      plan_id: o.plan_id,
+      amount: Number(o.amount || 0),
+      currency: o.currency || 'TRY',
+      status: o.status === 'paid' ? 'paid' : o.status || 'pending',
+      platform_order_id: o.platform_order_id,
+      shopier_payment_id: o.shopier_payment_id || null,
+      listing_ref: null,
+      listing_title: null,
+      created_at: o.created_at || null,
+      paid_at: o.paid_at || null,
+    }));
+    const bankItems = invoices.map((inv) => ({
+      id: inv.id,
+      source: 'bank',
+      user: inv.user,
+      package: inv.package,
+      amount: inv.amount,
+      currency: inv.currency,
+      status: inv.status === 'paid' ? 'paid' : 'pending',
+      bank_reference: inv.bank_reference,
+      platform_order_id: null,
+      shopier_payment_id: null,
+      listing_ref: null,
+      created_at: inv.issued_at,
+      paid_at: inv.marked_paid_at || null,
+    }));
+    return json({
+      items: [...shopierItems, ...bankItems],
+      summary: {
+        shopier_paid: shopierItems.filter((i) => i.status === 'paid').length,
+        shopier_pending: shopierItems.filter((i) => i.status === 'pending').length,
+        bank_unpaid: bankItems.filter((i) => i.status !== 'paid').length,
+      },
+    });
+  }
   if (route === 'admin/invoices/pay' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const inv = invoices.find((x) => x.id === b.id);
@@ -821,6 +937,14 @@ async function handleLive(request, route, path, method, sp, user) {
     if (result.error) return json({ error: result.error }, result.status);
     return json(result);
   }
+  if (path[0] === 'my' && path[1] === 'listings' && path[2] && path[3] === 'promote' && method === 'POST') {
+    const denied = requireUser(user);
+    if (denied) return json(denied, denied.status);
+    const body = await request.json().catch(() => ({}));
+    const result = await db.dbPromoteListing(user, path[2], body.plan);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
   if (route === 'my/become-landlord' && method === 'POST') {
     const denied = requireUser(user);
     if (denied) return json(denied, denied.status);
@@ -958,19 +1082,8 @@ async function handleLive(request, route, path, method, sp, user) {
     return json(result);
   }
   if (route === 'admin/invoices' && method === 'GET') {
-    const { supabaseAdmin } = await import('@/lib/supabase/admin');
-    const { data } = await supabaseAdmin().from('invoices').select('id, user_id, amount, currency, status, bank_reference, issued_at, profiles(full_name)').order('issued_at', { ascending: false }).limit(100);
-    return json({
-      items: (data || []).map((inv) => ({
-        id: inv.id,
-        user: inv.profiles?.full_name || inv.user_id?.slice(0, 8),
-        package: inv.bank_reference || 'Paket',
-        amount: Number(inv.amount),
-        currency: inv.currency,
-        status: inv.status,
-        bank_reference: inv.bank_reference,
-      })),
-    });
+    const result = await db.dbAdminPayments();
+    return json(result);
   }
   if (route === 'admin/invoices/pay' && method === 'POST') {
     const body = await request.json().catch(() => ({}));

@@ -650,7 +650,19 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <img src={l.photo || '/logo-icon.png'} alt="" className="h-16 w-24 rounded-lg object-cover shrink-0 bg-slate-100" />
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-slate-800 truncate">{l.title}</div>
+                    <div className="font-semibold text-slate-800 truncate flex items-center gap-2 flex-wrap">
+                      <span className="truncate">{l.title}</span>
+                      {l.premium_tier && (
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                          l.premium_tier === 'platinum' ? 'bg-[#7c3aed] text-white'
+                            : l.premium_tier === 'gold' ? 'bg-[#eab308] text-[#422006]'
+                              : 'bg-[#f59e0b] text-white'
+                        }`}
+                        >
+                          {l.premium_tier}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-500">{t('dash.ref')}: {l.reference_code} · {l.city} · {money(l.price, locale)}</div>
                     {l.status === 'rejected' && l.rejection_reason && (
                       <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 whitespace-pre-wrap leading-relaxed">
@@ -849,15 +861,28 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
             </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 className="font-bold text-[#0a3d54] mb-3">{t('admin.invoices')}</h3>
+            <h3 className="font-bold text-[#0a3d54] mb-3">{t('admin.payments')}</h3>
             <div className="space-y-2">
+              {(billing.premium_orders || []).map((o) => (
+                <div key={o.id} className="flex items-center justify-between rounded-xl border border-slate-100 p-3 text-sm gap-2">
+                  <span className="min-w-0 truncate">
+                    <span className="font-semibold text-[#0a4d68]">Shopier</span>
+                    {' · '}{String(o.plan_id || '').toUpperCase()}
+                    {o.listing_ref ? ` · ${o.listing_ref}` : ''}
+                    {' · '}{money({ amount: o.amount, currency: o.currency }, locale)}
+                  </span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${o.status === 'paid' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-amber-50 text-amber-700'}`}>{o.status}</span>
+                </div>
+              ))}
               {(billing.invoices || []).map((inv) => (
                 <div key={inv.id} className="flex items-center justify-between rounded-xl border border-slate-100 p-3 text-sm">
                   <span>{inv.package || inv.bank_reference} · {money({ amount: inv.amount, currency: inv.currency }, locale)}</span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${inv.status === 'paid' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-amber-50 text-amber-700'}`}>{inv.status}</span>
                 </div>
               ))}
-              {(!billing.invoices || billing.invoices.length === 0) && <p className="text-slate-400 text-sm">{t('admin.no_items')}</p>}
+              {(!billing.premium_orders?.length && !billing.invoices?.length) && (
+                <p className="text-slate-400 text-sm">{t('admin.no_payments')}</p>
+              )}
             </div>
           </div>
         </div>
@@ -1072,6 +1097,7 @@ function AdminReviewDetail({ t, locale, listingId, onClose, onAct }) {
 export function AdminView({ t, locale, auth }) {
   const [tab, setTab] = useState('queue');
   const [d, setD] = useState({});
+  const [invoiceSummary, setInvoiceSummary] = useState(null);
   const [toast, setToast] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [uniForm, setUniForm] = useState(null); // null | {} editing
@@ -1087,7 +1113,10 @@ export function AdminView({ t, locale, auth }) {
       audit: 'admin/audit',
       health: 'admin/health',
     };
-    api(map[k]).then((r) => setD((s) => ({ ...s, [k]: r.items || [] })));
+    api(map[k]).then((r) => {
+      setD((s) => ({ ...s, [k]: r.items || [] }));
+      if (k === 'invoices') setInvoiceSummary(r.summary || null);
+    });
   };
   useEffect(() => {
     if (!auth?.signedIn || auth?.role !== 'admin') return;
@@ -1115,7 +1144,7 @@ export function AdminView({ t, locale, auth }) {
     ['queue', t('admin.queue')],
     ['reports', t('admin.reports')],
     ['users', t('admin.users')],
-    ['invoices', t('admin.invoices')],
+    ['invoices', t('admin.payments')],
     ['universities', t('admin.universities')],
     ['health', t('admin.health')],
     ['audit', t('admin.audit')],
@@ -1313,16 +1342,91 @@ export function AdminView({ t, locale, auth }) {
       )}
 
       {tab === 'invoices' && (
-        <div className="space-y-2">
-          {(d.invoices || []).map(inv => (
-            <div key={inv.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3">
-              <div><span className="font-semibold text-slate-800">{inv.user}</span> <span className="text-xs text-slate-400">· {inv.package} · {money({ amount: inv.amount, currency: inv.currency }, locale)} · {inv.bank_reference}</span></div>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs rounded-full px-2 py-0.5 font-semibold ${inv.status === 'paid' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-amber-50 text-amber-700'}`}>{inv.status}</span>
-                {inv.status === 'unpaid' && <button onClick={() => act('admin/invoices/pay', { id: inv.id }, 'invoices')} className="inline-flex items-center gap-1 h-9 rounded-lg bg-[#15803d] px-3 text-white text-sm font-semibold"><CreditCard className="h-4 w-4" /> {t('admin.mark_paid')}</button>}
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">{t('admin.payments_hint')}</p>
+          {invoiceSummary && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-800">{t('admin.shopier_paid')}</div>
+                <div className="text-xl font-bold text-emerald-900 tabular-nums">{invoiceSummary.shopier_paid ?? 0}</div>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">{t('admin.shopier_pending')}</div>
+                <div className="text-xl font-bold text-amber-900 tabular-nums">{invoiceSummary.shopier_pending ?? 0}</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">{t('admin.bank_unpaid')}</div>
+                <div className="text-xl font-bold text-slate-800 tabular-nums">{invoiceSummary.bank_unpaid ?? 0}</div>
               </div>
             </div>
-          ))}
+          )}
+          {(d.invoices || []).map((inv) => {
+            const isShopier = inv.source === 'shopier';
+            const statusCls = inv.status === 'paid'
+              ? 'bg-[#dcfce7] text-[#15803d]'
+              : inv.status === 'failed' || inv.status === 'cancelled'
+                ? 'bg-red-50 text-red-700'
+                : 'bg-amber-50 text-amber-700';
+            const when = inv.paid_at || inv.created_at;
+            const whenLabel = when
+              ? new Date(when).toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB', { dateStyle: 'short', timeStyle: 'short' })
+              : '';
+            return (
+              <div key={`${inv.source || 'inv'}-${inv.id}`} className="rounded-xl border border-slate-200 bg-white p-3 sm:p-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                        isShopier ? 'bg-[#0a4d68] text-white' : 'bg-slate-200 text-slate-700'
+                      }`}
+                      >
+                        {isShopier ? 'Shopier' : t('admin.bank_transfer')}
+                      </span>
+                      <span className={`text-xs rounded-full px-2 py-0.5 font-semibold ${statusCls}`}>
+                        {inv.status === 'paid' ? t('admin.payment_paid')
+                          : inv.status === 'pending' || inv.status === 'unpaid' ? t('admin.payment_pending')
+                            : inv.status}
+                      </span>
+                      {whenLabel && <span className="text-[11px] text-slate-400">{whenLabel}</span>}
+                    </div>
+                    <div className="font-semibold text-slate-800 truncate">{inv.user}</div>
+                    <div className="text-xs text-slate-500 break-words">
+                      {inv.package}
+                      {inv.listing_ref ? ` · ${t('dash.ref')}: ${inv.listing_ref}` : ''}
+                      {inv.platform_order_id ? ` · ${inv.platform_order_id}` : ''}
+                      {inv.bank_reference && !isShopier ? ` · ${inv.bank_reference}` : ''}
+                    </div>
+                    {inv.user_email && (
+                      <div className="text-[11px] text-slate-400 truncate">{inv.user_email}{inv.buyer_phone ? ` · ${inv.buyer_phone}` : ''}</div>
+                    )}
+                    {isShopier && inv.shopier_payment_id && (
+                      <div className="text-[11px] text-slate-400 font-mono">Shopier ID: {inv.shopier_payment_id}</div>
+                    )}
+                    {inv.listing_title && (
+                      <div className="text-xs text-slate-600 truncate">{inv.listing_title}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-center justify-between sm:justify-end">
+                    <div className="text-lg font-bold text-[#0a4d68] tabular-nums">
+                      {money({ amount: inv.amount, currency: inv.currency }, locale)}
+                    </div>
+                    {!isShopier && (inv.status === 'unpaid' || inv.status === 'pending') && (
+                      <button
+                        type="button"
+                        onClick={() => act('admin/invoices/pay', { id: inv.id }, 'invoices')}
+                        className="inline-flex items-center gap-1 h-9 rounded-lg bg-[#15803d] px-3 text-white text-sm font-semibold"
+                      >
+                        <CreditCard className="h-4 w-4" /> {t('admin.mark_paid')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {!(d.invoices || []).length && (
+            <p className="text-sm text-slate-400 py-8 text-center">{t('admin.no_payments')}</p>
+          )}
         </div>
       )}
 

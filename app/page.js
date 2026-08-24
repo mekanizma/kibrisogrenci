@@ -40,6 +40,18 @@ const WhatsAppView = dynamic(
   () => import('@/components/panels').then((m) => m.WhatsAppView),
   { ssr: false, loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div> },
 );
+const PremiumView = dynamic(
+  () => import('@/components/PremiumView').then((m) => m.PremiumView),
+  { ssr: false, loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div> },
+);
+const PaymentCheckoutView = dynamic(
+  () => import('@/components/PaymentCheckoutView').then((m) => m.PaymentCheckoutView),
+  { ssr: false, loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div> },
+);
+const PaymentResultView = dynamic(
+  () => import('@/components/PaymentCheckoutView').then((m) => m.PaymentResultView),
+  { ssr: false, loading: () => <div className="container py-16 text-center text-slate-400 text-sm">Yükleniyor…</div> },
+);
 const PriceHistoryChart = dynamic(() => import('@/components/PriceHistoryChart'), {
   ssr: false,
   loading: () => <div className="h-40 animate-pulse rounded-xl bg-slate-100" />,
@@ -180,12 +192,21 @@ function ListingCard({ l, t, locale, currency, fx, onOpen, userLoc }) {
       ? `${formatDistance(Number(l.distance_m), locale)} ${t('geo.to_campus')}`
       : null);
   const walkLabel = [nearLabel, campusLabel].filter(Boolean).join(' · ') || null;
+  const tier = l.premium_tier || l.premium?.tier || null;
+  const prem = l.premium;
+  const cardTierClass = tier === 'platinum'
+    ? 'ko-uicard--platinum'
+    : tier === 'gold'
+      ? 'ko-uicard--gold'
+      : tier === 'bronze'
+        ? 'ko-uicard--bronze'
+        : '';
 
   return (
     <button
       type="button"
       onClick={() => onOpen(l.reference_code)}
-      className="ko-uicard group"
+      className={`ko-uicard group ${cardTierClass}`}
     >
       <section className="ko-uicard-media">
         <Image
@@ -198,8 +219,20 @@ function ListingCard({ l, t, locale, currency, fx, onOpen, userLoc }) {
           onError={() => setImgSrc(MOCK_PHOTOS[0])}
         />
         <div className="ko-uicard-filter" aria-hidden />
+        {prem?.sparkle && <div className="ko-uicard-sparkle" aria-hidden />}
         <div className="ko-uicard-overlay">
           <div className="ko-uicard-overlay-left">
+            {tier && (
+              <span className={`ko-chip font-bold shadow-sm ${
+                tier === 'platinum' ? 'bg-[#7c3aed] text-white'
+                  : tier === 'gold' ? 'bg-[#eab308] text-[#422006]'
+                    : 'bg-[#f59e0b] text-white'
+              }`}
+              >
+                <Sparkles className="h-3 w-3" />
+                {t(`premium.badge_${tier}`)}
+              </span>
+            )}
             {l.landlord_verified && <VerifiedPill t={t} small />}
             {l.landlord_is_agency && (
               <span className="ko-chip bg-white/90 text-slate-700 shadow-sm">
@@ -355,6 +388,24 @@ export default function App() {
   const fx = config?.fx_to_gbp || { TRY: 0.0234, USD: 0.79, EUR: 0.855, GBP: 1 };
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const payment = sp.get('payment');
+    if (!payment) return;
+    setView({
+      name: 'payment_result',
+      status: payment,
+      order: sp.get('order') || '',
+      plan: sp.get('plan') || '',
+      ref: sp.get('ref') || '',
+    });
+    // Clean query without reload
+    const url = new URL(window.location.href);
+    ['payment', 'order', 'plan', 'ref', 'reason'].forEach((k) => url.searchParams.delete(k));
+    window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
+  }, []);
+
+  useEffect(() => {
     const stored = loadStoredGeo();
     if (stored) {
       setUserLoc(stored);
@@ -487,6 +538,29 @@ export default function App() {
         {view.name === 'dashboard' && <DashboardView t={t} locale={locale} config={config} auth={auth} requestLocation={allowLocation} userLoc={userLoc} />}
         {view.name === 'admin' && <AdminView t={t} locale={locale} auth={auth} />}
         {view.name === 'whatsapp' && <WhatsAppView t={t} locale={locale} />}
+        {view.name === 'premium' && (
+          <PremiumView t={t} auth={auth} setAuthModal={setAuthModal} setView={setView} />
+        )}
+        {view.name === 'checkout' && (
+          <PaymentCheckoutView
+            t={t}
+            auth={auth}
+            setAuthModal={setAuthModal}
+            setView={setView}
+            planId={view.plan || 'gold'}
+            listingId={view.listingId}
+          />
+        )}
+        {view.name === 'payment_result' && (
+          <PaymentResultView
+            t={t}
+            setView={setView}
+            status={view.status || 'failed'}
+            orderId={view.order || ''}
+            planId={view.plan || ''}
+            listingRef={view.ref || ''}
+          />
+        )}
         {view.name === 'saved' && <SavedView {...shared} />}
         {view.name === 'messages' && (
           <MessagesView
@@ -588,6 +662,7 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
   ) : null;
   const navItems = [
     ['search', () => go({ name: 'search', filters: {} })],
+    ['premium', () => go({ name: 'premium' })],
     ['dashboard', () => go({ name: 'dashboard' })],
     ...(auth.signedIn ? [['messages', () => go({ name: 'messages' })], ['saved', () => go({ name: 'saved' })]] : []),
     ...(auth.role === 'admin' ? [['admin', () => go({ name: 'admin' })]] : []),
@@ -599,6 +674,7 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
   ];
   const mobileNavItems = [
     ['search', () => go({ name: 'search', filters: {} })],
+    ['premium', () => go({ name: 'premium' })],
     ...guideItems,
     ['dashboard', () => go({ name: 'dashboard' })],
     ...(auth.signedIn ? [['messages', () => go({ name: 'messages' })], ['saved', () => go({ name: 'saved' })], ['profile', () => go({ name: 'profile' })]] : []),
@@ -637,7 +713,17 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
 
         <nav className="hidden lg:flex items-center gap-1 text-sm font-medium text-slate-600">
           {navItems.map(([k, fn]) => (
-            <button type="button" key={k} onClick={fn} className="inline-flex items-center px-3 py-2 rounded-lg hover:bg-[var(--ko-mist)] hover:text-[#0a4d68] whitespace-nowrap transition-colors cursor-pointer">
+            <button
+              type="button"
+              key={k}
+              onClick={fn}
+              className={`inline-flex items-center px-3 py-2 rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
+                k === 'premium'
+                  ? 'text-[#0a4d68] font-semibold hover:bg-[#e0a256]/15'
+                  : 'hover:bg-[var(--ko-mist)] hover:text-[#0a4d68]'
+              }`}
+            >
+              {k === 'premium' ? <Sparkles className="h-3.5 w-3.5 me-1 text-[#e0a256]" /> : null}
               {t(`nav.${k}`)}
               {k === 'messages' ? unreadBadge : null}
             </button>
@@ -721,7 +807,15 @@ function Header({ t, locale, setLocale, currency, setCurrency, setView, auth, se
         <div className="lg:hidden border-t border-slate-200/70 bg-[#f6f4f0]/98 backdrop-blur-xl max-h-[calc(100dvh-4rem)] overflow-y-auto">
           <nav className="container py-3 pb-6 flex flex-col gap-1">
             {mobileNavItems.map(([k, fn]) => (
-              <button type="button" key={k} onClick={fn} className="inline-flex items-center text-start min-h-12 py-3 px-3 rounded-2xl text-sm font-medium text-slate-700 hover:bg-white">
+              <button
+                type="button"
+                key={k}
+                onClick={fn}
+                className={`inline-flex items-center text-start min-h-12 py-3 px-3 rounded-2xl text-sm font-medium hover:bg-white ${
+                  k === 'premium' ? 'text-[#0a4d68] font-semibold bg-white/70' : 'text-slate-700'
+                }`}
+              >
+                {k === 'premium' ? <Sparkles className="h-4 w-4 me-2 text-[#e0a256] shrink-0" /> : null}
                 {t(`nav.${k}`)}
                 {k === 'messages' ? unreadBadge : null}
               </button>
@@ -1814,6 +1908,17 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                 aria-label={locale === 'tr' ? 'Fotoğrafı büyüt' : 'Enlarge photo'}
               />
               <div className="pointer-events-none absolute top-2.5 start-2.5 end-2.5 z-[2] flex flex-wrap gap-1.5">
+                {l.premium_tier && (
+                  <span className={`pointer-events-auto inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold shadow-sm ${
+                    l.premium_tier === 'platinum' ? 'bg-[#7c3aed] text-white'
+                      : l.premium_tier === 'gold' ? 'bg-[#eab308] text-[#422006]'
+                        : 'bg-[#f59e0b] text-white'
+                  }`}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {t(`premium.badge_${l.premium_tier}`)}
+                  </span>
+                )}
                 {l.landlord_verified && <span className="pointer-events-auto"><VerifiedPill t={t} /></span>}
                 {l.landlord_is_agency && (
                   <span className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-white/90 text-slate-700 px-2.5 py-1 text-xs font-semibold">
@@ -2382,6 +2487,7 @@ function Footer({ t, locale, config, setView, goUniversity }) {
           <div className="font-semibold text-white mb-3">{t('nav.search')}</div>
           <ul className="space-y-2 text-sm">
             <li><button onClick={() => setView({ name: 'search', filters: {} })} className="hover:text-white transition-colors">{t('nav.search')}</button></li>
+            <li><button onClick={() => setView({ name: 'premium' })} className="hover:text-white transition-colors">{t('nav.premium')}</button></li>
             <li><button onClick={() => setView({ name: 'how' })} className="hover:text-white transition-colors">{t('nav.how')}</button></li>
             <li><button onClick={() => setView({ name: 'scam' })} className="hover:text-white transition-colors">{t('nav.scam')}</button></li>
           </ul>

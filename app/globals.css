@@ -125,6 +125,43 @@
     outline-offset: 3px;
   }
 
+  .ko-uicard--bronze {
+    border: 2px solid #f59e0b;
+    box-shadow: 10px 10px 0 rgba(245, 158, 11, 0.18);
+  }
+  .ko-uicard--gold {
+    border: 2px solid #eab308;
+    box-shadow: 10px 10px 0 rgba(234, 179, 8, 0.22);
+  }
+  .ko-uicard--platinum {
+    border: 2px solid #7c3aed;
+    box-shadow: 10px 10px 0 rgba(124, 58, 237, 0.2);
+  }
+
+  .ko-uicard-sparkle {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    background:
+      radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.55) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 72% 18%, rgba(255, 255, 255, 0.45) 0 1px, transparent 2px),
+      radial-gradient(circle at 55% 40%, rgba(196, 181, 253, 0.55) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 30% 70%, rgba(255, 255, 255, 0.35) 0 1px, transparent 2px),
+      linear-gradient(120deg, transparent 40%, rgba(167, 139, 250, 0.18) 50%, transparent 60%);
+    background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 220% 100%;
+    animation: ko-sparkle-sweep 3.6s ease-in-out infinite;
+  }
+
+  @keyframes ko-sparkle-sweep {
+    0%, 100% { background-position: 0 0, 0 0, 0 0, 0 0, 0% 0; opacity: 0.75; }
+    50% { background-position: 0 0, 0 0, 0 0, 0 0, 100% 0; opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ko-uicard-sparkle { animation: none; }
+  }
+
   .ko-uicard-media {
     position: relative;
     width: 100%;
