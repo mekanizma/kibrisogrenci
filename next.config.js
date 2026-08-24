@@ -29,7 +29,8 @@ if (isProd) {
       "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://api.frankfurter.dev https://challenges.cloudflare.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
-      "form-action 'self'",
+      // Shopier PAT hosted checkout POSTs the buyer to shopier.com
+      "form-action 'self' https://www.shopier.com https://shopier.com",
     ].join('; '),
   });
   securityHeaders.push({

@@ -15,6 +15,7 @@ function submitShopierForm(actionUrl, fields) {
   const form = document.createElement('form');
   form.method = 'POST';
   form.action = actionUrl;
+  form.acceptCharset = 'UTF-8';
   form.style.display = 'none';
   Object.entries(fields || {}).forEach(([name, value]) => {
     const input = document.createElement('input');
@@ -25,6 +26,23 @@ function submitShopierForm(actionUrl, fields) {
   });
   document.body.appendChild(form);
   form.submit();
+}
+
+function goToShopierCheckout(shopier) {
+  // Prefer hosted-checkout form POST; fall back to product page if CSP blocks it.
+  if (shopier?.actionUrl && shopier?.fields) {
+    try {
+      submitShopierForm(shopier.actionUrl, shopier.fields);
+      return true;
+    } catch {
+      /* fall through */
+    }
+  }
+  if (shopier?.paymentUrl) {
+    window.location.assign(shopier.paymentUrl);
+    return true;
+  }
+  return false;
 }
 
 export function PaymentCheckoutView({ t, auth, setAuthModal, setView, planId, listingId }) {
@@ -124,13 +142,31 @@ export function PaymentCheckoutView({ t, auth, setAuthModal, setView, planId, li
         return;
       }
       if (!data.shopier?.actionUrl || !data.shopier?.fields) {
+        if (data.shopier?.paymentUrl) {
+          if (started.current) return;
+          started.current = true;
+          window.location.assign(data.shopier.paymentUrl);
+          return;
+        }
         setError(t('pay.err_generic'));
         setBusy(false);
         return;
       }
       if (started.current) return;
       started.current = true;
-      submitShopierForm(data.shopier.actionUrl, data.shopier.fields);
+      const ok = goToShopierCheckout(data.shopier);
+      if (!ok) {
+        started.current = false;
+        setError(t('pay.err_generic'));
+        setBusy(false);
+        return;
+      }
+      // If CSP blocks the form POST, navigation never happens — fall back after a beat.
+      window.setTimeout(() => {
+        if (document.visibilityState === 'visible' && data.shopier?.paymentUrl) {
+          window.location.assign(data.shopier.paymentUrl);
+        }
+      }, 1200);
     } catch {
       setError(t('pay.err_generic'));
       setBusy(false);
