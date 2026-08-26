@@ -50,6 +50,8 @@ const invoices = [
 ];
 /** Mock admin review outcomes for seed + created listings: id -> { status, rejection_reason } */
 const listingModeration = new Map();
+/** Mock admin-deleted listing ids (seed listings cannot be spliced from LISTINGS) */
+const deletedListingIds = new Set();
 /** Mock in-app chat: { id, listing_id, ref, student_id, landlord_user_id, ... messages } */
 const mockConversations = [];
 const mockMessages = [];
@@ -136,6 +138,16 @@ function mockAdminListingDetail(id) {
       size_sqm: l.size_sqm,
       max_occupants: l.max_occupants,
       gender_preference: l.gender_preference,
+      roommate_criteria: l.roommate_criteria || {
+        marital_status: 'any', age_min: null, age_max: null, employment: 'any',
+        university_id: null, pets: 'any', smoking: 'any',
+      },
+      roommate_university: (() => {
+        const uid = l.roommate_criteria?.university_id;
+        if (!uid) return null;
+        const u = UNIVERSITIES.find((x) => x.id === uid);
+        return u ? { id: u.id, slug: u.slug, name: u.name_tr, city: u.city } : null;
+      })(),
       available_from: l.available_from,
       minimum_stay_months: l.minimum_stay_months,
       price: l.price,
@@ -328,10 +340,21 @@ async function handleMock(request, route, path, method, sp) {
     const l = getListingByRef(path[1]);
     if (!l) return json({ error: 'not_found' }, 404);
     const uni = UNIVERSITIES.find((u) => u.id === l.uni);
+    const criteria = l.roommate_criteria || {
+      marital_status: 'any', age_min: null, age_max: null, employment: 'any',
+      university_id: null, pets: 'any', smoking: 'any',
+    };
+    const criteriaUni = criteria.university_id
+      ? UNIVERSITIES.find((u) => u.id === criteria.university_id)
+      : null;
     const similar = LISTINGS.filter((s) => s.id !== l.id && s.uni === l.uni).slice(0, 3)
       .map((s) => ({ ...publicListing(s), price_index: priceIndexInfo(s) }));
     return json({
       ...publicListing(l),
+      roommate_criteria: criteria,
+      roommate_university: criteriaUni
+        ? { id: criteriaUni.id, slug: criteriaUni.slug, name_tr: criteriaUni.name_tr, name_en: criteriaUni.name_en, short: criteriaUni.short, city: criteriaUni.city }
+        : null,
       university: uni ? { id: uni.id, slug: uni.slug, name_tr: uni.name_tr, name_en: uni.name_en, short: uni.short, city: uni.city } : null,
       price_index: priceIndexInfo(l), similar,
     }, 200, PUBLIC_CACHE);
@@ -507,6 +530,104 @@ async function handleMock(request, route, path, method, sp) {
   }
   if (route === 'my/saved' && method === 'GET') return json({ items: [] });
 
+  if (route === 'admin/listings' && method === 'GET') {
+    const url = new URL(request.url);
+    const status = url.searchParams.get('status');
+    const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+    const mapSeed = (l, defaultStatus) => ({
+      id: l.id,
+      reference_code: l.reference_code,
+      title: l.title_tr,
+      owner: l.landlord.name,
+      status: listingModeration.get(l.id)?.status || defaultStatus,
+      city: l.city,
+      risk_flags: l.risk_flags || [],
+      photo: l.photos?.[0],
+      price: l.price,
+      view_count: l.view_count || 0,
+      contact_reveal_count: l.contact_reveal_count || 0,
+      premium_tier: l.premium_tier || null,
+      created_at: l.published_at || null,
+      updated_at: l.published_at || null,
+    });
+    const seedItems = LISTINGS.map((l) => mapSeed(l, (l.risk_flags?.length ? 'pending_review' : 'published')));
+    const created = userListings.map((u) => ({
+      id: u.id,
+      reference_code: u.reference_code,
+      title: u.title,
+      owner: u.owner,
+      status: listingModeration.get(u.id)?.status || u.status,
+      city: u.city,
+      risk_flags: u.risk_flags || [],
+      photo: u.photo || u.photos?.[0] || LISTINGS[0]?.photos?.[0],
+      price: u.price,
+      view_count: u.view_count || 0,
+      contact_reveal_count: u.contact_reveal_count || 0,
+      premium_tier: null,
+      created_at: u.created_at || null,
+      updated_at: u.updated_at || u.created_at || null,
+    }));
+    let items = [...seedItems, ...created].filter((i) => !deletedListingIds.has(i.id));
+    if (status && status !== 'all') items = items.filter((i) => i.status === status);
+    if (q) {
+      items = items.filter((i) =>
+        (i.reference_code || '').toLowerCase().includes(q)
+        || (i.title || '').toLowerCase().includes(q)
+        || (i.city || '').toLowerCase().includes(q)
+        || (i.owner || '').toLowerCase().includes(q));
+    }
+    items.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+    return json({ items, total: items.length });
+  }
+  if (route === 'admin/listings/action' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const action = String(b.action || '').toLowerCase();
+    const id = b.id;
+    if (!id || !action) return json({ error: 'invalid' }, 400);
+    const item = userListings.find((u) => u.id === id);
+    const seed = LISTINGS.find((l) => l.id === id);
+    const before = item?.status || listingModeration.get(id)?.status || (seed ? 'published' : null);
+    if (!before && !item && !seed) return json({ error: 'not_found' }, 404);
+
+    if (action === 'delete') {
+      const idx = userListings.findIndex((u) => u.id === id);
+      if (idx >= 0) userListings.splice(idx, 1);
+      deletedListingIds.add(id);
+      listingModeration.delete(id);
+      audit('Admin', 'listing.delete', 'listing', id, { status: before }, null);
+      return json({ ok: true, deleted: true });
+    }
+    if (action === 'approve') {
+      const status = 'published';
+      if (item) item.status = status;
+      listingModeration.set(id, { status, rejection_reason: null });
+      audit('Admin', 'listing.approve', 'listing', id, { status: before }, { status });
+      return json({ ok: true, status });
+    }
+    if (action === 'unpublish') {
+      const status = 'rejected';
+      const rejection_reason = b.reason || 'Yönetici tarafından yayından kaldırıldı.';
+      if (item) { item.status = status; item.rejection_reason = rejection_reason; }
+      listingModeration.set(id, { status, rejection_reason });
+      audit('Admin', 'listing.unpublish', 'listing', id, { status: before }, { status, rejection_reason });
+      return json({ ok: true, status });
+    }
+    if (action === 'pause') {
+      if (before !== 'published') return json({ error: 'invalid_status' }, 400);
+      if (item) item.status = 'paused';
+      listingModeration.set(id, { status: 'paused' });
+      audit('Admin', 'listing.pause', 'listing', id, { status: before }, { status: 'paused' });
+      return json({ ok: true, status: 'paused' });
+    }
+    if (action === 'resume') {
+      if (before !== 'paused') return json({ error: 'invalid_status' }, 400);
+      if (item) item.status = 'published';
+      listingModeration.set(id, { status: 'published' });
+      audit('Admin', 'listing.resume', 'listing', id, { status: before }, { status: 'published' });
+      return json({ ok: true, status: 'published' });
+    }
+    return json({ error: 'invalid_action' }, 400);
+  }
   if (route === 'admin/queue' && method === 'GET') {
     const seedPending = LISTINGS.filter((l) => l.risk_flags && l.risk_flags.length > 0)
       .filter((l) => {
@@ -1062,6 +1183,22 @@ async function handleLive(request, route, path, method, sp, user) {
   }
 
   if (route === 'admin/queue' && method === 'GET') return json(await db.dbAdminQueue());
+  if (route === 'admin/listings' && method === 'GET') {
+    const url = new URL(request.url);
+    const result = await db.dbAdminListings({
+      status: url.searchParams.get('status') || 'all',
+      q: url.searchParams.get('q') || '',
+      limit: url.searchParams.get('limit') || 80,
+      offset: url.searchParams.get('offset') || 0,
+    });
+    return json(result);
+  }
+  if (route === 'admin/listings/action' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const result = await db.dbAdminListingAction(user, body);
+    if (result.error) return json({ error: result.error }, result.status);
+    return json(result);
+  }
   if (path[0] === 'admin' && path[1] === 'listings' && path[2] && method === 'GET') {
     const result = await db.dbAdminListingDetail(path[2]);
     if (result.error) return json({ error: result.error }, result.status);

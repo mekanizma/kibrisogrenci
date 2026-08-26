@@ -10,7 +10,8 @@
         "start": "next start -H 0.0.0.0 -p 3000",
         "worker": "node scripts/worker.js",
         "whatsapp": "node scripts/whatsapp.js",
-        "sync:universities": "node scripts/sync-universities.mjs"
+        "sync:universities": "node scripts/sync-universities.mjs",
+        "db:migrate:roommate": "node scripts/apply-roommate-criteria.mjs"
     },
     "dependencies": {
         "@hookform/resolvers": "5.1.1",

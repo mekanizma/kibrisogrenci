@@ -11,6 +11,7 @@ import { api as apiFetch, getAccessToken } from '@/lib/api-client';
 import { createClient } from '@/lib/supabase/client';
 import { nearestCity, requestUserLocation } from '@/lib/geo-client';
 import { KKTC_CITIES } from '@/lib/universities';
+import { roommateCriteriaToForm, formatAgeRange } from '@/lib/roommate-criteria';
 
 const AnalyticsChart = dynamic(() => import('@/components/AnalyticsChart'), {
   ssr: false,
@@ -118,6 +119,13 @@ const EMPTY_FORM = {
   phone_e164: '',
   display_name: '',
   amenities: [],
+  roommate_marital_status: 'any',
+  roommate_age_min: '',
+  roommate_age_max: '',
+  roommate_employment: 'any',
+  roommate_university_id: '',
+  roommate_pets: 'any',
+  roommate_smoking: 'any',
 };
 
 const STATUS_STYLE = {
@@ -312,6 +320,7 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
         available_from: it.available_from ? String(it.available_from).slice(0, 10) : '',
         minimum_stay_months: it.minimum_stay_months != null ? String(it.minimum_stay_months) : '6',
         amenities: it.amenities || [],
+        ...roommateCriteriaToForm(it.roommate_criteria || it),
       });
       setExistingPhotoKeys(it.photos || []);
       setPhotoFiles([]);
@@ -568,13 +577,7 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
                       <label className={labelCls}>{t('dash.field_occupants')}</label>
                       <input className={selCls} type="number" min="1" value={form.max_occupants} onChange={(e) => setField('max_occupants', e.target.value)} />
                     </div>
-                    <div>
-                      <label className={labelCls}>{t('dash.field_gender')}</label>
-                      <select className={selCls} value={form.gender_preference} onChange={(e) => setField('gender_preference', e.target.value)}>
-                        {['any', 'male', 'female'].map((g) => <option key={g} value={g}>{t(`gender.${g}`)}</option>)}
-                      </select>
-                    </div>
-                    <div className="flex items-end gap-4 pb-1 flex-wrap">
+                    <div className="flex items-end gap-4 pb-1 flex-wrap sm:col-span-2">
                       <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                         <input type="checkbox" checked={form.furnished} onChange={(e) => setField('furnished', e.target.checked)} />
                         {t('search.furnished')}
@@ -583,6 +586,62 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
                         <input type="checkbox" checked={form.bills_included} onChange={(e) => setField('bills_included', e.target.checked)} />
                         {t('search.bills_included')}
                       </label>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 mb-1">{t('roommate.title')}</h4>
+                  <p className="text-[11px] text-slate-400 mb-3">{t('roommate.hint')}</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>{t('roommate.gender')}</label>
+                      <select className={selCls} value={form.gender_preference} onChange={(e) => setField('gender_preference', e.target.value)}>
+                        {['any', 'male', 'female'].map((g) => <option key={g} value={g}>{t(`gender.${g}`)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('roommate.marital')}</label>
+                      <select className={selCls} value={form.roommate_marital_status} onChange={(e) => setField('roommate_marital_status', e.target.value)}>
+                        {['any', 'single', 'married'].map((v) => <option key={v} value={v}>{t(`marital.${v}`)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('roommate.age_min')}</label>
+                      <input className={selCls} type="number" min="16" max="99" value={form.roommate_age_min} onChange={(e) => setField('roommate_age_min', e.target.value)} placeholder="18" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('roommate.age_max')}</label>
+                      <input className={selCls} type="number" min="16" max="99" value={form.roommate_age_max} onChange={(e) => setField('roommate_age_max', e.target.value)} placeholder="30" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('roommate.employment')}</label>
+                      <select className={selCls} value={form.roommate_employment} onChange={(e) => setField('roommate_employment', e.target.value)}>
+                        {['any', 'student', 'employed', 'unemployed'].map((v) => <option key={v} value={v}>{t(`employment.${v}`)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('roommate.university')}</label>
+                      <select className={selCls} value={form.roommate_university_id} onChange={(e) => setField('roommate_university_id', e.target.value)}>
+                        <option value="">{t('roommate.any')}</option>
+                        {unis.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {locale === 'tr' ? (u.name_tr || u.name_en) : (u.name_en || u.name_tr)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('roommate.pets')}</label>
+                      <select className={selCls} value={form.roommate_pets} onChange={(e) => setField('roommate_pets', e.target.value)}>
+                        {['any', 'no', 'yes', 'negotiable'].map((v) => <option key={v} value={v}>{t(`pets.${v}`)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>{t('roommate.smoking')}</label>
+                      <select className={selCls} value={form.roommate_smoking} onChange={(e) => setField('roommate_smoking', e.target.value)}>
+                        {['any', 'no', 'yes', 'outdoor_only'].map((v) => <option key={v} value={v}>{t(`smoking.${v}`)}</option>)}
+                      </select>
                     </div>
                   </div>
                 </section>
@@ -1123,6 +1182,33 @@ function AdminReviewDetail({ t, locale, listingId, onClose, onAct }) {
                 </div>
               </section>
 
+              {(item.roommate_criteria || item.gender_preference) && (
+                <section className="rounded-2xl border border-[#0a4d68]/15 bg-[#f0f7fa] p-4">
+                  <h3 className="text-sm font-bold text-[#0a3d54] mb-3">{t('roommate.title')}</h3>
+                  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-slate-700">
+                    <div><span className="text-slate-400">{t('roommate.gender')}:</span> {t(`gender.${item.gender_preference || 'any'}`)}</div>
+                    {item.roommate_criteria?.marital_status && item.roommate_criteria.marital_status !== 'any' && (
+                      <div><span className="text-slate-400">{t('roommate.marital')}:</span> {t(`marital.${item.roommate_criteria.marital_status}`)}</div>
+                    )}
+                    {(item.roommate_criteria?.age_min != null || item.roommate_criteria?.age_max != null) && (
+                      <div><span className="text-slate-400">{t('roommate.age')}:</span> {formatAgeRange(item.roommate_criteria, locale) || '—'}</div>
+                    )}
+                    {item.roommate_criteria?.employment && item.roommate_criteria.employment !== 'any' && (
+                      <div><span className="text-slate-400">{t('roommate.employment')}:</span> {t(`employment.${item.roommate_criteria.employment}`)}</div>
+                    )}
+                    {item.roommate_university && (
+                      <div><span className="text-slate-400">{t('roommate.university')}:</span> {item.roommate_university.name}</div>
+                    )}
+                    {item.roommate_criteria?.pets && item.roommate_criteria.pets !== 'any' && (
+                      <div><span className="text-slate-400">{t('roommate.pets')}:</span> {t(`pets.${item.roommate_criteria.pets}`)}</div>
+                    )}
+                    {item.roommate_criteria?.smoking && item.roommate_criteria.smoking !== 'any' && (
+                      <div><span className="text-slate-400">{t('roommate.smoking')}:</span> {t(`smoking.${item.roommate_criteria.smoking}`)}</div>
+                    )}
+                  </dl>
+                </section>
+              )}
+
               <section className="rounded-2xl border border-slate-200 bg-white p-4">
                 <h3 className="text-sm font-bold text-[#0a3d54] mb-2">{t('admin.description')}</h3>
                 <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{item.description || '—'}</p>
@@ -1200,11 +1286,22 @@ export function AdminView({ t, locale, auth }) {
   const [invoiceSummary, setInvoiceSummary] = useState(null);
   const [toast, setToast] = useState('');
   const [selectedId, setSelectedId] = useState(null);
+  const [listingFilter, setListingFilter] = useState('all');
+  const [listingSearch, setListingSearch] = useState('');
   const [uniForm, setUniForm] = useState(null); // null | {} editing
   const [uniSaving, setUniSaving] = useState(false);
   const reload = (k) => {
     const map = {
       queue: 'admin/queue',
+      listings: () => {
+        const params = new URLSearchParams();
+        if (listingFilter && listingFilter !== 'all') params.set('status', listingFilter);
+        if (listingSearch.trim()) params.set('q', listingSearch.trim());
+        const qs = params.toString();
+        return api(`admin/listings${qs ? `?${qs}` : ''}`).then((r) => {
+          setD((s) => ({ ...s, listings: r.items || [], listingsTotal: r.total ?? (r.items || []).length }));
+        });
+      },
       reports: 'admin/reports',
       users: 'admin/users',
       invoices: 'admin/invoices',
@@ -1213,7 +1310,9 @@ export function AdminView({ t, locale, auth }) {
       audit: 'admin/audit',
       health: 'admin/health',
     };
-    api(map[k]).then((r) => {
+    const target = map[k];
+    if (typeof target === 'function') return target();
+    return api(target).then((r) => {
       setD((s) => ({ ...s, [k]: r.items || [] }));
       if (k === 'invoices') setInvoiceSummary(r.summary || null);
     });
@@ -1221,7 +1320,14 @@ export function AdminView({ t, locale, auth }) {
   useEffect(() => {
     if (!auth?.signedIn || auth?.role !== 'admin') return;
     reload(tab);
-  }, [tab, auth?.signedIn, auth?.role]);
+  }, [tab, auth?.signedIn, auth?.role, listingFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!auth?.signedIn || auth?.role !== 'admin' || tab !== 'listings') return undefined;
+    const timer = setTimeout(() => reload('listings'), 350);
+    return () => clearTimeout(timer);
+  }, [listingSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const act = async (p, body, k) => {
     const res = await api(p, { method: 'POST', body: JSON.stringify(body) });
     if (res?.error) throw new Error(res.error);
@@ -1230,6 +1336,18 @@ export function AdminView({ t, locale, auth }) {
     if (k !== 'audit') reload('audit');
     setTimeout(() => setToast(''), 3000);
     return res;
+  };
+
+  const listingAct = async (id, action, reason) => {
+    if (action === 'delete' && !window.confirm(t('admin.confirm_delete_listing'))) return;
+    if (action === 'unpublish' && !window.confirm(t('admin.confirm_unpublish'))) return;
+    try {
+      await act('admin/listings/action', { id, action, reason }, 'listings');
+      if (action === 'delete' && selectedId === id) setSelectedId(null);
+    } catch {
+      setToast(t('dash.err_generic'));
+      setTimeout(() => setToast(''), 3000);
+    }
   };
 
   if (!auth?.signedIn || auth?.role !== 'admin') {
@@ -1242,6 +1360,7 @@ export function AdminView({ t, locale, auth }) {
 
   const tabs = [
     ['queue', t('admin.queue')],
+    ['listings', t('admin.all_listings')],
     ['reports', t('admin.reports')],
     ['users', t('admin.users')],
     ['invoices', t('admin.payments')],
@@ -1301,9 +1420,111 @@ export function AdminView({ t, locale, auth }) {
           listingId={selectedId}
           onClose={() => setSelectedId(null)}
           onAct={async (action, reason) => {
-            await act('admin/review', { id: selectedId, action, reason: reason || undefined }, 'queue');
+            const reviewTab = tab === 'queue' ? 'queue' : 'listings';
+            await act('admin/review', { id: selectedId, action, reason: reason || undefined }, reviewTab);
           }}
         />
+      )}
+
+      {tab === 'listings' && (
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500">{t('admin.listings_hint')}</p>
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+            <input
+              type="search"
+              value={listingSearch}
+              onChange={(e) => setListingSearch(e.target.value)}
+              placeholder={t('admin.search_listings')}
+              className="h-11 w-full sm:flex-1 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/30"
+            />
+            <select
+              value={listingFilter}
+              onChange={(e) => setListingFilter(e.target.value)}
+              className="h-11 w-full sm:w-44 rounded-xl border border-slate-200 px-3 text-sm outline-none focus:ring-2 focus:ring-[#0a4d68]/30 bg-white"
+              aria-label={t('admin.filter_status')}
+            >
+              <option value="all">{t('admin.filter_all')}</option>
+              {['published', 'pending_review', 'draft', 'rejected', 'paused', 'rented', 'expired'].map((s) => (
+                <option key={s} value={s}>{t(`dash.${s === 'pending_review' ? 'pending' : s === 'rented' ? 'closed' : s}`)}</option>
+              ))}
+            </select>
+          </div>
+          {d.listingsTotal != null && (
+            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+              {t('admin.total_count').replace('{n}', String(d.listingsTotal))}
+            </div>
+          )}
+          <div className="space-y-3">
+            {(d.listings || []).map((l) => (
+              <div key={l.id} className="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(l.id)}
+                  className="w-full flex items-start gap-3 sm:gap-4 text-start group cursor-pointer"
+                >
+                  <img src={l.photo || '/logo-icon.png'} alt="" className="h-16 w-24 sm:h-20 sm:w-28 rounded-lg object-cover shrink-0 bg-slate-100" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-slate-800 group-hover:text-[#0a4d68] transition-colors truncate">{l.title}</span>
+                      <StatusPill s={l.status} t={t} />
+                      {l.premium_tier && (
+                        <span className="shrink-0 rounded-full bg-[#eab308] px-2 py-0.5 text-[10px] font-bold uppercase text-[#422006]">
+                          {l.premium_tier}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      {l.owner || '—'} · {l.reference_code}{l.city ? ` · ${l.city}` : ''}{l.price ? ` · ${money(l.price, locale)}` : ''}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 mt-1.5">
+                      <span className="inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {l.view_count ?? 0}</span>
+                      <span className="inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {l.contact_reveal_count ?? 0}</span>
+                      {l.risk_flags?.length > 0 && (
+                        <span className="text-red-600 font-semibold">{l.risk_flags.length} {t('admin.flags')}</span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+                <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100">
+                  <button type="button" onClick={() => setSelectedId(l.id)} className="h-9 flex-1 sm:flex-none min-w-[7rem] rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 inline-flex items-center justify-center gap-1">
+                    <Eye className="h-4 w-4" /> {t('admin.open_detail')}
+                  </button>
+                  {l.status === 'pending_review' && (
+                    <button type="button" onClick={() => listingAct(l.id, 'approve')} className="h-9 flex-1 sm:flex-none min-w-[7rem] rounded-lg bg-[#15803d] px-3 text-white text-sm font-semibold inline-flex items-center justify-center gap-1">
+                      <CheckCircle2 className="h-4 w-4" /> {t('admin.approve')}
+                    </button>
+                  )}
+                  {l.status === 'published' && (
+                    <>
+                      <button type="button" onClick={() => listingAct(l.id, 'pause')} className="h-9 flex-1 sm:flex-none min-w-[7rem] rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-semibold text-sky-800 inline-flex items-center justify-center gap-1">
+                        <Pause className="h-3.5 w-3.5" /> {t('admin.pause_listing')}
+                      </button>
+                      <button type="button" onClick={() => listingAct(l.id, 'unpublish')} className="h-9 flex-1 sm:flex-none min-w-[7rem] rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 inline-flex items-center justify-center gap-1">
+                        <CircleSlash className="h-3.5 w-3.5" /> {t('admin.unpublish')}
+                      </button>
+                    </>
+                  )}
+                  {l.status === 'paused' && (
+                    <>
+                      <button type="button" onClick={() => listingAct(l.id, 'resume')} className="h-9 flex-1 sm:flex-none min-w-[7rem] rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-800 inline-flex items-center justify-center gap-1">
+                        <Play className="h-3.5 w-3.5" /> {t('admin.resume_listing')}
+                      </button>
+                      <button type="button" onClick={() => listingAct(l.id, 'unpublish')} className="h-9 flex-1 sm:flex-none min-w-[7rem] rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 inline-flex items-center justify-center gap-1">
+                        <CircleSlash className="h-3.5 w-3.5" /> {t('admin.unpublish')}
+                      </button>
+                    </>
+                  )}
+                  <button type="button" onClick={() => listingAct(l.id, 'delete')} className="h-9 flex-1 sm:flex-none min-w-[7rem] rounded-lg border border-red-100 bg-red-50 px-3 text-sm font-semibold text-red-600 inline-flex items-center justify-center gap-1">
+                    <Trash2 className="h-3.5 w-3.5" /> {t('admin.delete_listing')}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {(!d.listings || d.listings.length === 0) && (
+              <p className="text-slate-400 text-center py-10">{t('admin.no_items')}</p>
+            )}
+          </div>
+        </div>
       )}
 
       {tab === 'reports' && (

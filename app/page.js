@@ -26,6 +26,7 @@ import {
   setGeoPref,
 } from '@/lib/geo-client';
 import { KKTC_CITIES, UNI_CATALOG, universityLogoSrc } from '@/lib/universities';
+import { hasRoommateCriteria, formatAgeRange } from '@/lib/roommate-criteria';
 import TurnstileCaptcha, { isTurnstileConfigured } from '@/components/TurnstileCaptcha';
 
 const DashboardView = dynamic(
@@ -338,6 +339,54 @@ function MapCircle({ l, t }) {
   const label = `${l?.neighbourhood || ''}${l?.neighbourhood && l?.city ? ', ' : ''}${l?.city || ''} · ${t('listing.approx_location')}`;
   return (
     <ListingMap lat={lat} lng={lng} label={label} radiusM={300} />
+  );
+}
+
+function RoommateCriteriaSection({ l, t, locale }) {
+  const c = l?.roommate_criteria;
+  if (!hasRoommateCriteria(c, l?.gender_preference)) return null;
+
+  const label = (group, value) => {
+    if (!value || value === 'any') return t('roommate.any');
+    const key = `${group}.${value}`;
+    const out = t(key);
+    return out === key ? value : out;
+  };
+
+  const ageText = formatAgeRange(c, locale);
+  const uniName = l.roommate_university
+    ? (locale === 'tr'
+      ? (l.roommate_university.name_tr || l.roommate_university.name_en)
+      : (l.roommate_university.name_en || l.roommate_university.name_tr))
+    : null;
+
+  const rows = [
+    [t('roommate.gender'), label('gender', l.gender_preference)],
+    [t('roommate.marital'), label('marital', c?.marital_status)],
+    [t('roommate.age'), ageText],
+    [t('roommate.employment'), label('employment', c?.employment)],
+    [t('roommate.university'), uniName],
+    [t('roommate.pets'), label('pets', c?.pets)],
+    [t('roommate.smoking'), label('smoking', c?.smoking)],
+  ].filter(([, v]) => v && v !== t('roommate.any'));
+
+  if (!rows.length) return null;
+
+  return (
+    <div className="min-w-0 rounded-2xl border border-[#0a4d68]/15 bg-[#f0f7fa] p-4 sm:p-5">
+      <h2 className="font-bold text-[#0a3d54] mb-3 flex items-center gap-2">
+        <Users className="h-5 w-5 shrink-0 text-[#0a4d68]" />
+        {t('roommate.title')}
+      </h2>
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
+        {rows.map(([k, v]) => (
+          <div key={k} className="min-w-0">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-0.5">{k}</dt>
+            <dd className="text-slate-800 font-medium break-words">{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 
@@ -2103,6 +2152,8 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
               </div>
             ))}
           </div>
+
+          <RoommateCriteriaSection l={l} t={t} locale={locale} />
 
           {/* Description */}
           <div className="min-w-0">

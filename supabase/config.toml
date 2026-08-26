@@ -1,0 +1,5 @@
+# Minimal Supabase CLI config for remote migrations (project: kibrisogrenci)
+project_id = "gglvjbajtthsczofgjdz"
+
+[db]
+major_version = 15
