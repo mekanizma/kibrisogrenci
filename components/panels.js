@@ -17,6 +17,11 @@ const AnalyticsChart = dynamic(() => import('@/components/AnalyticsChart'), {
   loading: () => <div className="h-64 animate-pulse rounded-xl bg-slate-100" />,
 });
 
+const SYMBOL = { TRY: '₺', GBP: '£', USD: '$', EUR: '€' };
+const money = (p, locale) => {
+  if (!p || p.amount == null) return '—';
+  return `${SYMBOL[p.currency] || ''}${Number(p.amount).toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}`;
+};
 const PLAN_LABEL = { bronze: 'Bronz', gold: 'Altın', platinum: 'Platin' };
 
 function auditActionMeta(action) {
