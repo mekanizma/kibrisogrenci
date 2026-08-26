@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import {
   Plus, Eye, Phone, CreditCard, CheckCircle2, XCircle,
   ShieldAlert, Activity, Building2, Send, Bot,
-  BadgeCheck, AlertTriangle, Banknote, X, ImagePlus,
+  BadgeCheck, AlertTriangle, X, ImagePlus,
   Pencil, Trash2, MapPin, Flag, Pause, Play, CircleSlash,
 } from 'lucide-react';
 import { api as apiFetch, getAccessToken } from '@/lib/api-client';
@@ -17,8 +17,62 @@ const AnalyticsChart = dynamic(() => import('@/components/AnalyticsChart'), {
   loading: () => <div className="h-64 animate-pulse rounded-xl bg-slate-100" />,
 });
 
-const SYMBOL = { TRY: '₺', GBP: '£', USD: '$', EUR: '€' };
-const money = (p, locale) => `${SYMBOL[p.currency] || ''}${Number(p.amount).toLocaleString(locale === 'tr' ? 'tr-TR' : 'en-GB')}`;
+const PLAN_LABEL = { bronze: 'Bronz', gold: 'Altın', platinum: 'Platin' };
+
+function auditActionMeta(action) {
+  const map = {
+    'premium.checkout_start': { title: 'Ödeme başlatıldı', tone: 'amber' },
+    'premium.paid': { title: 'Premium ödendi', tone: 'emerald' },
+    'listing.promote': { title: 'İlan öne çıkarıldı', tone: 'emerald' },
+    'listing.create': { title: 'İlan oluşturuldu', tone: 'sky' },
+    'listing.update': { title: 'İlan güncellendi', tone: 'sky' },
+    'listing.delete': { title: 'İlan silindi', tone: 'rose' },
+    'listing.approve': { title: 'İlan onaylandı', tone: 'emerald' },
+    'listing.reject': { title: 'İlan reddedildi', tone: 'rose' },
+    'listing.pause': { title: 'İlan duraklatıldı', tone: 'amber' },
+    'listing.resume': { title: 'İlan yeniden yayınlandı', tone: 'emerald' },
+    'listing.close': { title: 'İlan kapatıldı', tone: 'slate' },
+    'listing.unpublish': { title: 'İlan yayından alındı', tone: 'rose' },
+    'report.resolve': { title: 'Şikayet çözüldü', tone: 'sky' },
+    'user.status': { title: 'Kullanıcı durumu değişti', tone: 'amber' },
+    'invoice.mark_paid': { title: 'Fatura ödendi', tone: 'emerald' },
+    'university.create': { title: 'Üniversite eklendi', tone: 'sky' },
+    'university.update': { title: 'Üniversite güncellendi', tone: 'sky' },
+    'university.delete': { title: 'Üniversite silindi', tone: 'rose' },
+    'university.deactivate': { title: 'Üniversite pasifleştirildi', tone: 'amber' },
+    'university.verify_coords': { title: 'Kampüs koordinatı doğrulandı', tone: 'emerald' },
+    'landlord.verify': { title: 'İlan sahibi doğrulandı', tone: 'emerald' },
+    'landlord.reject_verify': { title: 'Doğrulama reddedildi', tone: 'rose' },
+  };
+  return map[action] || { title: action, tone: 'slate' };
+}
+
+function auditDetailLines(a) {
+  const lines = [];
+  if (a.plan) lines.push(`${PLAN_LABEL[a.plan] || a.plan} paket`);
+  if (a.listing_ref) lines.push(`İlan ${a.listing_ref}`);
+  else if (a.listing_title) lines.push(a.listing_title);
+  if (a.order_id) lines.push(`Sipariş ${a.order_id}`);
+  if (a.payment_id) lines.push(`Ödeme #${a.payment_id}`);
+  if (a.premium_until) {
+    try {
+      lines.push(`Bitiş ${new Date(a.premium_until).toLocaleDateString('tr-TR')}`);
+    } catch { /* ignore */ }
+  }
+  if (a.status) lines.push(`Durum: ${a.status}`);
+  if (a.reason) lines.push(String(a.reason).slice(0, 120));
+  if (a.actor_name) lines.push(a.actor_name);
+  else if (a.actor_user) lines.push(a.actor_user);
+  return lines;
+}
+
+const AUDIT_TONE = {
+  emerald: 'bg-emerald-50 text-emerald-800 border-emerald-100',
+  amber: 'bg-amber-50 text-amber-900 border-amber-100',
+  rose: 'bg-rose-50 text-rose-800 border-rose-100',
+  sky: 'bg-sky-50 text-sky-800 border-sky-100',
+  slate: 'bg-slate-50 text-slate-700 border-slate-200',
+};
 const api = async (p, o = {}) => {
   const headers = { ...(o.headers || {}) };
   const token = getAccessToken();
@@ -389,18 +443,39 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
       )}
 
       {data?.verification_status === 'verified' && (
-        <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 flex items-center gap-2">
-          <BadgeCheck className="h-4 w-4 shrink-0" /> {t('admin.verified')} — {t('listing.verified')}
+        <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 flex items-start gap-2">
+          <BadgeCheck className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold">{t('dash.verify_ok_title')}</div>
+            <div className="text-emerald-800/80 text-xs mt-0.5">{t('dash.verify_ok_sub')}</div>
+          </div>
         </div>
       )}
       {data?.verification_status === 'pending' && (
-        <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {t('admin.verify_pending')} · {t('common.verified_soon')}
+        <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold">{t('dash.verify_pending_title')}</div>
+            <div className="text-amber-800/80 text-xs mt-0.5">{t('dash.verify_pending_sub')}</div>
+          </div>
         </div>
       )}
       {data?.verification_status === 'rejected' && (
-        <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {t('admin.verify_rejected')}
+        <div className="mb-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800 flex items-start gap-2">
+          <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold">{t('dash.verify_rejected_title')}</div>
+            <div className="text-red-700/80 text-xs mt-0.5">{t('dash.verify_rejected_sub')}</div>
+          </div>
+        </div>
+      )}
+      {data && (!data.verification_status || data.verification_status === 'unverified') && (
+        <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 flex items-start gap-2">
+          <BadgeCheck className="h-4 w-4 shrink-0 mt-0.5 text-slate-400" />
+          <div>
+            <div className="font-semibold">{t('dash.verify_none_title')}</div>
+            <div className="text-slate-500 text-xs mt-0.5">{t('dash.verify_none_sub')}</div>
+          </div>
         </div>
       )}
 
@@ -841,24 +916,40 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
       {tab === 'billing' && billing && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h3 className="font-bold text-[#0a3d54] mb-3">{t('dash.billing')}</h3>
-            {billing.subscription ? (
-              <div className="rounded-xl bg-[#e8f2f6] p-4 mb-3">
-                <div className="text-sm text-slate-500">{billing.subscription.package} · {billing.subscription.status}</div>
-                <div className="text-lg font-bold text-[#0a4d68]">{billing.subscription.listings_used}/{billing.subscription.listings_total} {t('dash.used')}</div>
+            <h3 className="font-bold text-[#0a3d54] mb-3">{t('dash.active_packages')}</h3>
+            {(billing.active_packages || []).length > 0 ? (
+              <div className="space-y-2">
+                {billing.active_packages.map((p) => (
+                  <div
+                    key={`${p.listing_id}-${p.plan_id}`}
+                    className="rounded-xl border border-slate-100 bg-[#e8f2f6]/60 p-3.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-[#0a4d68]">
+                          {PLAN_LABEL[p.plan_id] || String(p.plan_id || '').toUpperCase()}
+                        </div>
+                        <div className="text-xs text-slate-600 mt-0.5 truncate">
+                          {p.listing_ref ? `${t('dash.ref')} ${p.listing_ref}` : ''}
+                          {p.listing_title ? ` · ${p.listing_title}` : ''}
+                        </div>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-[#dcfce7] text-[#15803d] px-2 py-0.5 text-[11px] font-semibold">
+                        {t('dash.package_active')}
+                      </span>
+                    </div>
+                    {p.premium_until && (
+                      <div className="text-[11px] text-slate-500 mt-2">
+                        {t('dash.package_until')}:{' '}
+                        {new Date(p.premium_until).toLocaleDateString(locale === 'tr' ? 'tr-TR' : 'en-GB')}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             ) : (
-              <p className="text-sm text-slate-500 mb-3">{t('dash.no_subscription')}</p>
+              <p className="text-sm text-slate-500">{t('dash.no_active_packages')}</p>
             )}
-            <div className="rounded-xl border border-slate-200 p-4">
-              <div className="font-semibold text-slate-700 flex items-center gap-2 mb-2"><Banknote className="h-4 w-4" /> {t('dash.bank_transfer')}</div>
-              <div className="text-sm text-slate-600 space-y-1">
-                <div>{billing.bank_instructions?.bank}</div>
-                <div dir="ltr" className="font-mono text-xs">{billing.bank_instructions?.iban}</div>
-                <div>Ref: <span className="font-bold text-[#0a4d68]">{billing.bank_instructions?.reference}</span></div>
-              </div>
-              <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-3">{t('dash.bank_note')}</p>
-            </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-5">
             <h3 className="font-bold text-[#0a3d54] mb-3">{t('admin.payments')}</h3>
@@ -867,17 +958,21 @@ export function DashboardView({ t, locale, config, auth, requestLocation, userLo
                 <div key={o.id} className="flex items-center justify-between rounded-xl border border-slate-100 p-3 text-sm gap-2">
                   <span className="min-w-0 truncate">
                     <span className="font-semibold text-[#0a4d68]">Shopier</span>
-                    {' · '}{String(o.plan_id || '').toUpperCase()}
+                    {' · '}{PLAN_LABEL[o.plan_id] || String(o.plan_id || '').toUpperCase()}
                     {o.listing_ref ? ` · ${o.listing_ref}` : ''}
                     {' · '}{money({ amount: o.amount, currency: o.currency }, locale)}
                   </span>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${o.status === 'paid' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-amber-50 text-amber-700'}`}>{o.status}</span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${o.status === 'paid' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-amber-50 text-amber-700'}`}>
+                    {o.status === 'paid' ? t('admin.payment_paid') : t('admin.payment_pending')}
+                  </span>
                 </div>
               ))}
               {(billing.invoices || []).map((inv) => (
                 <div key={inv.id} className="flex items-center justify-between rounded-xl border border-slate-100 p-3 text-sm">
                   <span>{inv.package || inv.bank_reference} · {money({ amount: inv.amount, currency: inv.currency }, locale)}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${inv.status === 'paid' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-amber-50 text-amber-700'}`}>{inv.status}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${inv.status === 'paid' ? 'bg-[#dcfce7] text-[#15803d]' : 'bg-amber-50 text-amber-700'}`}>
+                    {inv.status === 'paid' ? t('admin.payment_paid') : t('admin.payment_pending')}
+                  </span>
                 </div>
               ))}
               {(!billing.premium_orders?.length && !billing.invoices?.length) && (
@@ -1707,16 +1802,37 @@ export function AdminView({ t, locale, auth }) {
 
       {tab === 'audit' && (
         <div className="space-y-2">
-          {(d.audit || []).map(a => (
-            <div key={a.id} className="rounded-xl border border-slate-200 bg-white p-3 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-[#0a4d68]">{a.action}</span>
-                <span className="text-xs text-slate-400">{new Date(a.created_at).toLocaleString()}</span>
+          <p className="text-xs text-slate-500 px-0.5 mb-1">
+            Son işlemler — kim ne yaptı, kısa özet.
+          </p>
+          {(d.audit || []).map((a) => {
+            const meta = auditActionMeta(a.action);
+            const details = auditDetailLines(a);
+            return (
+              <div key={a.id} className="rounded-xl border border-slate-200 bg-white p-3 sm:p-3.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className={`inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold ${AUDIT_TONE[meta.tone] || AUDIT_TONE.slate}`}>
+                      {meta.title}
+                    </span>
+                    {details.length > 0 && (
+                      <p className="mt-1.5 text-sm text-slate-700 leading-snug break-words">
+                        {details.join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                  <time className="shrink-0 text-[11px] text-slate-400 tabular-nums text-end">
+                    {new Date(a.created_at).toLocaleString('tr-TR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </time>
+                </div>
               </div>
-              <div className="text-xs text-slate-500">{a.actor_user} · {a.entity_type}:{a.entity_id}</div>
-              <div className="text-xs text-slate-400 font-mono mt-1">{JSON.stringify(a.before_snapshot)} → {JSON.stringify(a.after_snapshot)}</div>
-            </div>
-          ))}
+            );
+          })}
           {(!d.audit || d.audit.length === 0) && <p className="text-slate-400 text-center py-10">{t('admin.no_items')}</p>}
         </div>
       )}

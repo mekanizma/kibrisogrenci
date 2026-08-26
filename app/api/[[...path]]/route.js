@@ -487,10 +487,22 @@ async function handleMock(request, route, path, method, sp) {
   }
   if (route === 'my/billing' && method === 'GET') {
     const owner = sp.get('owner') || 'Ayşe Yılmaz';
+    const activePackages = LISTINGS
+      .filter((l) => l.premium_tier && l.landlord?.name === owner)
+      .slice(0, 5)
+      .map((l) => ({
+        listing_id: l.id,
+        listing_ref: l.reference_code,
+        listing_title: l.title_tr,
+        plan_id: l.premium_tier,
+        premium_until: l.premium_until || null,
+        status: l.status,
+      }));
     return json({
-      subscription: { package: 'Pro', status: 'active', listings_used: 2, listings_total: 15, ends_at: new Date(Date.now() + 60 * 86400000).toISOString() },
+      subscription: null,
+      active_packages: activePackages,
       invoices: invoices.filter((i) => i.user === owner),
-      bank_instructions: { bank: 'Kıbrıs Vakıflar Bankası', iban: process.env.BANK_IBAN || 'TR00 0000 0000 0000 0000 0000 00', reference: 'KO-PRO-AYSE-01' },
+      premium_orders: [],
     });
   }
   if (route === 'my/saved' && method === 'GET') return json({ items: [] });

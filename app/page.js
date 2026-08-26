@@ -186,11 +186,17 @@ function ListingCard({ l, t, locale, currency, fx, onOpen, userLoc }) {
   const nearLabel = userDistM != null
     ? `${formatDistance(userDistM, locale)} ${t('geo.from_you')}`
     : null;
+  const uniShorts = (l.universities?.length
+    ? l.universities.map((u) => u.short).filter(Boolean)
+    : (l.university?.short ? [l.university.short] : []));
+  const uniLabel = uniShorts.length
+    ? `${uniShorts.slice(0, 2).join(', ')}${uniShorts.length > 2 ? ` +${uniShorts.length - 2}` : ''}`
+    : null;
   const campusLabel = l.walking_minutes != null
-    ? `${l.walking_minutes} ${locale === 'tr' ? 'dk' : 'min'} ${t('geo.to_campus')}`
+    ? `${l.walking_minutes} ${locale === 'tr' ? 'dk' : 'min'}${uniLabel ? ` · ${uniLabel}` : ` ${t('geo.to_campus')}`}`
     : (l.distance_m != null
-      ? `${formatDistance(Number(l.distance_m), locale)} ${t('geo.to_campus')}`
-      : null);
+      ? `${formatDistance(Number(l.distance_m), locale)}${uniLabel ? ` · ${uniLabel}` : ` ${t('geo.to_campus')}`}`
+      : (uniLabel ? `${uniLabel} ${t('listing.near')}` : null));
   const walkLabel = [nearLabel, campusLabel].filter(Boolean).join(' · ') || null;
   const tier = l.premium_tier || l.premium?.tier || null;
   const prem = l.premium;
@@ -268,6 +274,18 @@ function ListingCard({ l, t, locale, currency, fx, onOpen, userLoc }) {
             </span>
           ) : null}
         </div>
+        {uniLabel && (
+          <>
+            <div className="ko-uicard-sep" />
+            <div className="ko-uicard-row">
+              <p className="ko-uicard-row-label">
+                <GraduationCap className="h-3.5 w-3.5 shrink-0 text-[#0a4d68]" />
+                <span className="truncate">{t('listing.near_uni')}</span>
+              </p>
+              <p className="ko-uicard-row-value truncate max-w-[55%] text-end">{uniLabel}</p>
+            </div>
+          </>
+        )}
         <div className="ko-uicard-sep" />
         <div className="ko-uicard-row">
           <p className="ko-uicard-title">{title}</p>
@@ -2049,6 +2067,17 @@ function ListingView({ t, locale, currency, fx, refCode, setView, goListing, aut
                       ? l.universities.map((u) => u.short).join(', ')
                       : l.university?.short) || '—'}
                     )
+                  </span>
+                </span>
+              )}
+              {l.walking_minutes == null && (l.universities?.length || l.university?.short) && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#0a4d68]/10 text-[#0a4d68] border border-[#0a4d68]/15 px-2.5 py-1 text-xs font-semibold max-w-full">
+                  <GraduationCap className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t('listing.near_uni')}:{' '}
+                    {(l.universities?.length
+                      ? l.universities.map((u) => u.short).join(', ')
+                      : l.university?.short) || '—'}
                   </span>
                 </span>
               )}
